@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>Magdalena Reporta</title>
+<meta property="og:title" content="Magdalena Reporta 🗺️"/>
+<meta property="og:description" content="Mapa ciudadano de reportes. Denunciá problemas en tu localidad..."/>
+<meta property="og:image" content="https://epa-magdalena-reporta.vercel.app/epa-bot.png"/>
+<meta property="og:image:width" content="600"/>
+<meta property="og:image:height" content="700"/>
+<meta name="twitter:image" content="https://epa-magdalena-reporta.vercel.app/epa-bot.png"/>
+<meta property="og:url" content="https://epa-magdalena-reporta.vercel.app/"/>
+<meta property="og:type" content="website"/>
+<meta name="description" content="Mapa ciudadano de reportes. Denunciá problemas en tu localidad..."/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="Magdalena Reporta 🗺️"/>
+<meta name="twitter:description" content="Mapa ciudadano de reportes. Denunciá problemas en tu localidad..."/>
+<meta name="referrer" content="no-referrer-when-downgrade"/>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+.leaflet-container img.leaflet-tile { mix-blend-mode: normal !important; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #F3F0FA; --surface: #FDFBFF; --surface2: #EAE4F5;
+  --accent: #4A2C8A; --accent2: #7B52C7; --accent-light: #EDE7FB;
+  --accent-border: #C4B0EF; --text: #1A1520; --text2: #52456B;
+  --text3: #9080AA; --border: #D8CFF0; --radius: 12px; --radius-sm: 8px;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; -webkit-tap-highlight-color: transparent; }
+
+header { background: var(--accent); color: white; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 62px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 8px rgba(74,44,138,0.25); }
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-logo { width: 36px; height: 36px; background: rgba(255,255,255,0.18); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+header p { font-size: 11px; opacity: 0.72; margin-top: 1px; }
+#total-badge { background: rgba(255,255,255,0.2); padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+
+.layout { display: grid; grid-template-columns: 370px 1fr; height: calc(100vh - 62px); }
+#sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.tabs { display: flex; border-bottom: 1px solid var(--border); }
+.tab { flex: 1; padding: 13px; font-size: 13px; font-weight: 500; text-align: center; cursor: pointer; color: var(--text2); border: none; background: none; border-bottom: 2.5px solid transparent; transition: all 0.2s; font-family: inherit; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover:not(.active) { background: var(--surface2); }
+.panel { flex: 1; overflow-y: auto; display: none; padding: 20px; }
+.panel.active { display: block; }
+
+.form-title { font-size: 19px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.form-subtitle { font-size: 13px; color: var(--text2); margin-bottom: 20px; line-height: 1.5; }
+
+.steps { display: flex; margin-bottom: 24px; position: relative; }
+.steps::before { content: ""; position: absolute; top: 14px; left: 14px; right: 14px; height: 2px; background: var(--border); z-index: 0; }
+.step-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; position: relative; z-index: 1; }
+.step-circle { width: 28px; height: 28px; border-radius: 50%; background: var(--surface2); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: var(--text3); transition: all 0.3s; }
+.step-item.active .step-circle { background: var(--accent); border-color: var(--accent); color: white; }
+.step-item.done .step-circle { background: var(--accent2); border-color: var(--accent2); color: white; }
+.step-label { font-size: 11px; color: var(--text3); text-align: center; }
+.step-item.active .step-label { color: var(--accent); font-weight: 500; }
+.step-item.done .step-label { color: var(--accent2); }
+
+.form-section { display: none; }
+.form-section.active { display: block; }
+.field-label { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; display: block; }
+.field-hint { font-size: 12px; color: var(--text3); margin-bottom: 10px; line-height: 1.5; }
+.field-hint.multi { color: var(--accent2); font-weight: 500; margin-bottom: 10px; }
+#selected-count { display: none; font-size: 12px; background: var(--accent); color: white; padding: 3px 10px; border-radius: 20px; margin-left: 8px; font-weight: 500; }
+
+.cat-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+.cat-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.15s; background: var(--surface); user-select: none; -webkit-user-select: none; }
+.cat-item:hover { border-color: var(--accent2); background: var(--accent-light); }
+.cat-item.selected { border-color: var(--accent); background: var(--accent-light); }
+.cat-checkbox { width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid var(--border); flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.15s; background: white; }
+.cat-item.selected .cat-checkbox { background: var(--accent); border-color: var(--accent); }
+.cat-checkbox-tick { display: none; color: white; font-size: 11px; font-weight: 700; }
+.cat-item.selected .cat-checkbox-tick { display: block; }
+.cat-icon { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
+.cat-name { font-size: 13px; font-weight: 500; color: var(--text); flex: 1; }
+
+textarea { width: 100%; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: inherit; font-size: 14px; color: var(--text); background: var(--surface); resize: none; transition: border-color 0.2s; outline: none; min-height: 80px; line-height: 1.5; -webkit-appearance: none; }
+textarea:focus { border-color: var(--accent); }
+
+.loc-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.loc-btn-big { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 14px; background: var(--surface); color: var(--text); transition: all 0.15s; width: 100%; text-align: left; -webkit-appearance: none; }
+.loc-btn-big:hover { border-color: var(--accent2); background: var(--accent-light); }
+.loc-btn-big.selected { border-color: var(--accent); background: var(--accent-light); }
+.loc-btn-big:disabled { opacity: 0.4; cursor: not-allowed; }
+.loc-btn-icon { font-size: 18px; }
+.loc-btn-info strong { display: block; font-weight: 500; font-size: 13px; }
+.loc-btn-info span { font-size: 11px; color: var(--text3); }
+#location-display { background: var(--accent-light); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; color: var(--accent); margin-top: 8px; display: none; }
+
+.btn-row { display: flex; gap: 8px; margin-top: 20px; }
+.btn { padding: 11px 20px; border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; -webkit-appearance: none; }
+.btn-primary { background: var(--accent); color: white; flex: 1; }
+.btn-primary:hover { background: #371f6b; }
+.btn-primary:disabled { opacity: 0.38; cursor: not-allowed; }
+.btn-secondary { background: none; border: 1.5px solid var(--border); color: var(--text2); font-family: inherit; }
+.btn-secondary:hover { background: var(--surface2); }
+
+#success-msg { display: none; text-align: center; padding: 10px 0 20px; }
+.success-icon { width: 60px; height: 60px; background: var(--accent-light); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; margin: 0 auto 14px; }
+#success-msg h3 { font-size: 17px; font-weight: 700; margin-bottom: 10px; color: var(--accent); }
+#success-msg p { font-size: 13px; color: var(--text2); line-height: 1.6; }
+#success-msg .epa { font-size: 15px; font-weight: 700; color: var(--accent); margin-top: 10px; letter-spacing: 0.5px; }
+
+#reports-list { display: flex; flex-direction: column; gap: 10px; }
+.report-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; transition: all 0.15s; }
+.report-card:hover { border-color: var(--accent2); box-shadow: 0 2px 8px rgba(74,44,138,0.08); }
+.rc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.rc-cats { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
+.rc-cat-tag { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-light); border: 1px solid var(--accent-border); color: var(--accent); padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+.rc-time { font-size: 11px; color: var(--text3); white-space: nowrap; }
+.rc-desc { font-size: 12px; color: var(--text2); line-height: 1.4; margin-bottom: 6px; }
+.rc-loc { font-size: 11px; color: var(--text3); display: flex; align-items: center; justify-content: space-between; }
+.status-badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 500; background: #EDE7FB; color: #4A2C8A; margin-left: 6px; }
+.no-reports { text-align: center; padding: 40px 20px; color: var(--text3); font-size: 13px; }
+.no-reports .nr-icon { font-size: 32px; margin-bottom: 10px; }
+
+.btn-solve { display: none; }
+.admin-mode .btn-solve { display: inline-block; }
+.btn-delete { background: #FCEAEA; border: 1px solid #F5BFBF; color: #C0392B; font-size: 11px; padding: 3px 10px; border-radius: 20px; cursor: pointer; font-family: inherit; font-weight: 500; display: none; }
+.btn-delete:hover { background: #F5BFBF; }
+.admin-mode .btn-delete { display: inline-block; }
+
+#admin-banner { display: none; background: #4A2C8A; color: white; text-align: center; padding: 6px; font-size: 12px; font-weight: 500; }
+#admin-banner.visible { display: block; }
+
+footer { text-align: center; padding: 8px; display: flex; gap: 8px; justify-content: center; align-items: center; }
+#stats-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: var(--border); opacity: 0.3; transition: opacity 0.2s; padding: 4px 8px; text-decoration: none; display: inline-block; }
+#stats-btn:hover { opacity: 1; }
+#admin-lock { background: none; border: none; cursor: pointer; font-size: 13px; color: var(--border); opacity: 0.3; transition: opacity 0.2s; padding: 4px 8px; }
+#admin-lock:hover { opacity: 1; }
+
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 2000; align-items: center; justify-content: center; }
+.modal-overlay.visible { display: flex; }
+.modal { background: white; border-radius: var(--radius); padding: 28px 24px; width: 320px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+.modal h3 { font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.modal p { font-size: 13px; color: var(--text2); margin-bottom: 18px; }
+.modal input { width: 100%; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: inherit; font-size: 14px; color: var(--text); outline: none; margin-bottom: 12px; -webkit-appearance: none; }
+.modal input:focus { border-color: var(--accent); }
+.modal-error { font-size: 12px; color: #C0392B; margin-bottom: 10px; display: none; }
+.modal-btns { display: flex; gap: 8px; }
+
+#map-panel { position: relative; }
+#map { width: 100%; height: 100%; }
+#map-hint { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: white; padding: 9px 18px; border-radius: 20px; font-size: 13px; font-weight: 500; z-index: 1000; pointer-events: none; display: none; white-space: nowrap; box-shadow: 0 4px 14px rgba(74,44,138,0.35); }
+
+.leaflet-popup-content-wrapper { border-radius: 10px !important; box-shadow: 0 4px 20px rgba(74,44,138,0.15) !important; }
+.popup-content { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 2px; min-width: 180px; }
+.popup-cats { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.popup-cat-tag { display: inline-flex; align-items: center; gap: 3px; background: #EDE7FB; color: #4A2C8A; padding: 2px 7px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+.popup-content .pc-desc { font-size: 13px; color: #1A1520; margin-bottom: 4px; line-height: 1.4; }
+.popup-content .pc-time { font-size: 11px; color: #9080AA; }
+
+#loading-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 3000; }
+.spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-overlay p { font-size: 13px; color: var(--text3); }
+
+@media (max-width: 700px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  #sidebar { max-height: 56vh; }
+  #map-panel { min-height: 44vh; }
+}
+
+/* Honeypot anti-bot: NUNCA visible para humanos */
+.hp-field { position: absolute; left: -9999px; top: -9999px; opacity: 0; height: 0; width: 0; overflow: hidden; }
+
+/* Rate limit warning */
+#rate-limit-msg { display: none; background: #FFF3CD; border: 1px solid #FFEAA7; color: #856404; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; margin-top: 10px; text-align: center; }
+</style>
+<script src="https://www.google.com/recaptcha/api.js?render=6LfmgccsAAAACIK-9gOuG8m8xtpjCCi7llHYGlm"></script>
+</head>
+<body>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <p>Conectando...</p>
+</div>
+
+<div id="admin-banner">🔐 Modo administrador activo — podés eliminar reclamos · <button onclick="adminLogout()" style="background:none;border:none;color:white;cursor:pointer;font-size:12px;text-decoration:underline;">Cerrar sesión</button></div>
+
+<header>
+  <div class="header-left">
+    <div class="header-logo">📍</div>
+    <div>
+      <h1>Magdalena Reporta</h1>
+      <p>Informá problemas en tu municipio</p>
+    </div>
+  </div>
+  <div id="total-badge">0 reportes</div>
+</header>
+
+<div class="layout">
+  <div id="sidebar">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('form')">✏️ Nuevo reclamo</button>
+      <button class="tab" onclick="switchTab('list')">📋 Ver reclamos</button>
+    </div>
+
+    <div class="panel active" id="panel-form">
+      <p class="form-title">Nuevo reclamo</p>
+      <p class="form-subtitle">Completá los 3 pasos para registrar un problema en Magdalena.</p>
+
+      <div class="steps">
+        <div class="step-item active" id="step-1"><div class="step-circle">1</div><div class="step-label">Tipo</div></div>
+        <div class="step-item" id="step-2"><div class="step-circle">2</div><div class="step-label">Descripción</div></div>
+        <div class="step-item" id="step-3"><div class="step-circle">3</div><div class="step-label">Ubicación</div></div>
+        <div class="step-item" id="step-4"><div class="step-circle">4</div><div class="step-label">Contacto</div></div>
+      </div>
+
+      <div class="form-section active" id="sec-1">
+        <div style="display:flex; align-items:center; margin-bottom:4px;">
+          <label class="field-label" style="margin-bottom:0">¿Qué problemas querés reportar?</label>
+          <span id="selected-count"></span>
+        </div>
+        <p class="field-hint multi">Podés seleccionar más de uno.</p>
+        <div class="cat-list" id="cat-list"></div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btn-next-1" onclick="goToStep(2)" disabled>Siguiente →</button>
+        </div>
+      </div>
+
+      <div class="form-section" id="sec-2">
+        <label class="field-label">Describí el problema</label>
+        <p class="field-hint">Contá brevemente qué está pasando. Por ejemplo: "Hay un pozo grande frente al número 450".</p>
+        <textarea id="description" placeholder="Escribí la descripción acá..." oninput="checkDesc()" maxlength="500"></textarea>
+        <div style="font-size:11px;color:var(--text3);text-align:right;margin-top:4px;" id="desc-counter">0 / 500</div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goToStep(1)">← Volver</button>
+          <button class="btn btn-primary" id="btn-next-2" onclick="goToStep(3)">Siguiente →</button>
+        </div>
+      </div>
+
+      <div class="form-section" id="sec-3">
+        <label class="field-label">¿Dónde está el problema?</label>
+        <div class="loc-options">
+          <button class="loc-btn-big" id="btn-gps" onclick="useGPS()">
+            <div class="loc-btn-icon">📍</div>
+            <div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>Detecta tu posición automáticamente</span></div>
+          </button>
+          <button class="loc-btn-big" id="btn-map" onclick="useMapClick()">
+            <div class="loc-btn-icon">🗺️</div>
+            <div class="loc-btn-info"><strong>Hacer clic en el mapa</strong><span>Marcá el punto exacto en el mapa</span></div>
+          </button>
+        </div>
+        <div id="location-display">📍 <span id="loc-text"></span></div>
+        <div id="location-confirmed" style="display:none;background:#e6f4ea;border:1.5px solid #34a853;border-radius:10px;padding:12px 14px;margin-top:10px;align-items:center;gap:10px;"><span style="font-size:20px">✅</span><div><strong style="display:block;font-size:13px;font-weight:700;color:#1e7e34">¡Posición marcada en el mapa!</strong><span style="font-size:11px;color:#2d6a4f">Podés avanzar al siguiente paso.</span></div></div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="cancelMapClick(); goToStep(2)">← Volver</button>
+          <button class="btn btn-primary" id="btn-next-3" onclick="goToStep(4)" disabled>Siguiente →</button>
+        </div>
+      </div>
+
+      <div class="form-section" id="sec-4">
+        <label class="field-label">Dejanos tu contacto <span style="font-size:11px;color:var(--text3);font-weight:400;">(opcional)</span></label>
+        <p class="field-hint">Si querés que nos comuniquemos con vos sobre este reclamo, dejanos tu nombre y un medio de contacto. <strong>Nos pondremos en contacto con vos.</strong></p>
+        <input type="text" id="contact-name" placeholder="Tu nombre (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
+        <input type="text" id="contact-info" placeholder="WhatsApp, email o teléfono (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
+
+        <!-- ✅ SEGURIDAD: Honeypot - invisible para humanos, bots lo llenan -->
+        <div class="hp-field" aria-hidden="true" tabindex="-1">
+          <input type="text" name="website" id="hp-website" tabindex="-1" autocomplete="off" aria-hidden="true"/>
+        </div>
+
+        <!-- Rate limit warning -->
+        <div id="rate-limit-msg">⏳ Por favor esperá un momento antes de enviar otro reclamo.</div>
+
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goToStep(3)">← Volver</button>
+          <button class="btn btn-primary" id="btn-submit" onclick="submitReport()">Enviar reclamo ✓</button>
+        </div>
+      </div>
+
+      <div id="success-msg">
+        <div class="success-icon">✅</div>
+        <h3>¡Reclamo enviado! ✔️</h3>
+        <p>Gracias por sumar tu voz.<br><br>
+        Cuantas más voces se escuchen, más fuerza tenemos para impulsar soluciones.<br><br>
+        Entre todos, podemos transformar la realidad.</p>
+        <p class="epa">EPA MAGDALENA</p>
+        <div class="btn-row" style="justify-content:center; margin-top:18px;">
+          <button class="btn btn-primary" onclick="resetForm()">Cargar otro reclamo</button>
+        </div>
+        <a href="https://magdalena-reporta-estadisticas.vercel.app/" target="_blank" style="display: block; text-align: center; margin-top: 12px; padding: 12px 20px; background: #7B2FBE; color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 500;">📊 Ver Estadísticas</a>
+        <button onclick="compartirApp()" style="display: block; width: 100%; text-align: center; margin-top: 12px; padding: 12px 20px; background: #25D366; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer;">🔗 Invitá a otros vecinos a ser parte</button>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-list">
+      <a href="https://magdalena-reporta-estadisticas.vercel.app/" target="_blank" style="display: block; text-align: center; margin-bottom: 16px; padding: 12px 20px; background: #7B2FBE; color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 500;">📊 Ver Estadísticas</a>
+      <div id="reports-list"></div>
+    </div>
+  </div>
+
+  <div id="map-panel">
+    <div id="map"></div>
+    <div id="map-hint">👆 Hacé clic en el mapa para marcar el problema</div>
+  </div>
+</div>
+
+<footer></footer>
+
+<!-- Modal login admin -->
+<div class="modal-overlay" id="admin-modal">
+  <div class="modal">
+    <h3>Acceso administrador</h3>
+    <p>Ingresá con tu cuenta de administrador.</p>
+    <input type="email" id="admin-email" placeholder="Email" autocomplete="off"/>
+    <input type="password" id="admin-password" placeholder="Contraseña" onkeydown="if(event.key==='Enter') doAdminLogin()"/>
+    <p class="modal-error" id="login-error">Email o contraseña incorrectos.</p>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" onclick="closeAdminModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="doAdminLogin()">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Firebase config ───────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyDFXuoyQubWEI7wmJdDQOggs7hcQklYWJ0",
+  authDomain: "magdalena-reporta-29854.firebaseapp.com",
+  databaseURL: "https://magdalena-reporta-29854-default-rtdb.firebaseio.com",
+  projectId: "magdalena-reporta-29854",
+  storageBucket: "magdalena-reporta-29854.firebasestorage.app",
+  messagingSenderId: "115719593016",
+  appId: "1:115719593016:web:e8b0821df77bb698e71acd"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const auth = firebase.auth();
+
+// ─── Categorías ────────────────────────────────────────────────────
+const CATS = [
+  { id:"obra",      name:"Obra sin terminar",             icon:"🚧" },
+  { id:"calle",     name:"Calle en mal estado",            icon:"🕳️" },
+  { id:"luminaria", name:"Luminaria sin funcionamiento",   icon:"💡" },
+  { id:"basura",    name:"Basura acumulada",               icon:"🗑️" },
+  { id:"cloaca",    name:"Sin cloaca",                     icon:"🔧" },
+  { id:"agua",      name:"Sin red de agua potable",        icon:"💧" },
+  { id:"faltlum",   name:"Falta de luminaria",             icon:"🔦" },
+  { id:"tacho",     name:"Sin tacho de basura",            icon:"🪣" },
+  { id:"rampa",     name:"Rampa en mal estado",             icon:"♿" },
+  { id:"zanja",     name:"Zanja en mal estado",             icon:"🌊" },
+  { id:"otro",      name:"Otro",                            icon:"⚠️" },
+];
+
+let map, markerLayer, tempMarker;
+let selectedCats = [], selectedLoc = null, mapClickMode = false;
+let markers = {};
+let isAdmin = false;
+
+// ─── ✅ SEGURIDAD: Rate limiting en memoria ────────────────────────
+// Limita 1 envío por minuto por sesión
+const RATE_LIMIT_MS = 60000;
+let lastSubmitTime = 0;
+// También usamos sessionStorage como respaldo
+function canSubmit() {
+  const now = Date.now();
+  // Chequear en memoria
+  if (now - lastSubmitTime < RATE_LIMIT_MS) return false;
+  // Chequear en sessionStorage
+  try {
+    const stored = sessionStorage.getItem('_ls');
+    if (stored && (now - parseInt(stored)) < RATE_LIMIT_MS) return false;
+  } catch(e) {}
+  return true;
+}
+function markSubmitted() {
+  lastSubmitTime = Date.now();
+  try { sessionStorage.setItem('_ls', lastSubmitTime.toString()); } catch(e) {}
+}
+
+// ─── ✅ SEGURIDAD: Sanitizar HTML para prevenir XSS ────────────────
+function sanitize(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ─── ✅ SEGURIDAD: Validar datos antes de enviar ───────────────────
+function validateReport(data) {
+  if (!data.cats || !Array.isArray(data.cats) || data.cats.length === 0) return false;
+  if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return false;
+  if (data.lat < -36 || data.lat > -34) return false;
+  if (data.lng < -59 || data.lng > -56) return false;
+  if (typeof data.description !== 'string') return false;
+  if (data.description.length < 5 || data.description.length > 500) return false;
+  return true;
+}
+
+// ─── Mapa ──────────────────────────────────────────────────────────
+function initMap() {
+  map = L.map("map", { tap: false }).setView([-35.0795, -57.5219], 14);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors", maxZoom: 19, crossOrigin: true
+  }).addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+  map.on("click", onMapClick);
+  setTimeout(() => map.invalidateSize(), 400);
+}
+
+function onMapClick(e) {
+  if (!mapClickMode) return;
+  selectedLoc = { lat: e.latlng.lat, lng: e.latlng.lng };
+  document.getElementById("loc-text").textContent = e.latlng.lat.toFixed(5) + ", " + e.latlng.lng.toFixed(5);
+  document.getElementById("location-display").style.display = "none";
+  var conf = document.getElementById("location-confirmed");
+  if (conf) conf.style.display = "flex";
+  document.getElementById("btn-next-3").disabled = false;
+  cancelMapClick();
+  document.getElementById("btn-map").classList.add("selected");
+  document.getElementById("btn-map").innerHTML = `<div class="loc-btn-icon">✅</div><div class="loc-btn-info"><strong>Posición marcada</strong><span>Punto fijado en el mapa</span></div>`;
+  addTempMarker(e.latlng.lat, e.latlng.lng);
+}
+
+function addTempMarker(lat, lng) {
+  if (tempMarker) map.removeLayer(tempMarker);
+  var icon = L.divIcon({
+    html: `<div style="position:relative;background:white;border:2.5px solid #4A2C8A;border-radius:50% 50% 50% 0;width:32px;height:32px;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.3)"><span style="transform:rotate(45deg);font-size:14px">📍</span></div>`,
+    className: "", iconAnchor: [16,32], popupAnchor: [0,-32]
+  });
+  tempMarker = L.marker([lat, lng], { icon: icon }).addTo(markerLayer);
+}
+
+// ─── GPS ───────────────────────────────────────────────────────────
+function useGPS() {
+  if (!navigator.geolocation) {
+    document.getElementById("btn-gps").innerHTML = `<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>No disponible en este navegador</span></div>`;
+    return;
+  }
+  document.getElementById("btn-gps").innerHTML = `<div class="loc-btn-icon">⏳</div><div class="loc-btn-info"><strong>Obteniendo ubicación...</strong><span>Por favor esperá</span></div>`;
+  navigator.geolocation.getCurrentPosition(pos => {
+    selectedLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    const label = pos.coords.latitude.toFixed(5) + ", " + pos.coords.longitude.toFixed(5);
+    document.getElementById("loc-text").textContent = label;
+    document.getElementById("location-display").style.display = "block";
+    document.getElementById("btn-next-3").disabled = false;
+    document.getElementById("btn-gps").classList.add("selected");
+    document.getElementById("btn-gps").innerHTML = `<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Ubicación obtenida ✓</strong><span>${label}</span></div>`;
+    addTempMarker(pos.coords.latitude, pos.coords.longitude);
+    map.flyTo([pos.coords.latitude, pos.coords.longitude], 16);
+  }, err => {
+    let msg = err.code === 1 ? "Permiso denegado. Probá el mapa." : "No se pudo obtener. Probá el mapa.";
+    document.getElementById("btn-gps").innerHTML = `<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>${msg}</span></div>`;
+  }, { timeout: 10000, enableHighAccuracy: true });
+}
+
+function useMapClick() {
+  mapClickMode = true;
+  document.getElementById("map-hint").style.display = "block";
+  document.getElementById("btn-map").classList.add("selected");
+  document.getElementById("btn-map").innerHTML = `<div class="loc-btn-icon">👆</div><div class="loc-btn-info"><strong>Hacé clic en el mapa</strong><span>Esperando tu selección...</span></div>`;
+  if (window.innerWidth <= 700) document.getElementById("map-panel").scrollIntoView({ behavior:"smooth" });
+}
+
+function cancelMapClick() {
+  mapClickMode = false;
+  document.getElementById("map-hint").style.display = "none";
+}
+
+// ─── Categorías UI ────────────────────────────────────────────────
+function buildCatList() {
+  const list = document.getElementById("cat-list");
+  CATS.forEach(cat => {
+    const div = document.createElement("div");
+    div.className = "cat-item";
+    div.innerHTML = `<div class="cat-checkbox"><span class="cat-checkbox-tick">✓</span></div><span class="cat-icon">${sanitize(cat.icon)}</span><span class="cat-name">${sanitize(cat.name)}</span>`;
+    div.onclick = () => toggleCat(cat, div);
+    list.appendChild(div);
+  });
+}
+
+function toggleCat(cat, div) {
+  // ✅ SEGURIDAD: Validar que la categoría es del listado oficial
+  const validCat = CATS.find(c => c.id === cat.id);
+  if (!validCat) return;
+  const idx = selectedCats.findIndex(c => c.id === cat.id);
+  if (idx === -1) { selectedCats.push({ id: validCat.id, name: validCat.name, icon: validCat.icon }); div.classList.add("selected"); }
+  else { selectedCats.splice(idx, 1); div.classList.remove("selected"); }
+  const count = selectedCats.length;
+  const badge = document.getElementById("selected-count");
+  badge.style.display = count > 0 ? "inline" : "none";
+  if (count > 0) badge.textContent = count + " seleccionado" + (count !== 1 ? "s" : "");
+  document.getElementById("btn-next-1").disabled = count === 0;
+}
+
+// ─── Pasos ────────────────────────────────────────────────────────
+function goToStep(n) {
+  document.querySelectorAll(".form-section").forEach(s => s.classList.remove("active"));
+  document.getElementById("sec-" + n).classList.add("active");
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById("step-" + i);
+    el.classList.remove("active","done");
+    if (i < n) el.classList.add("done");
+    else if (i === n) el.classList.add("active");
+  }
+  if (n === 3) {
+    selectedLoc = null;
+    document.getElementById("location-display").style.display = "none";
+    var conf2 = document.getElementById("location-confirmed"); if(conf2) conf2.style.display = "none";
+    document.getElementById("btn-next-3").disabled = true;
+    document.getElementById("btn-gps").className = "loc-btn-big";
+    document.getElementById("btn-gps").innerHTML = `<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>Detecta tu posición automáticamente</span></div>`;
+    document.getElementById("btn-map").className = "loc-btn-big";
+    document.getElementById("btn-map").innerHTML = `<div class="loc-btn-icon">🗺️</div><div class="loc-btn-info"><strong>Hacer clic en el mapa</strong><span>Marcá el punto exacto en el mapa</span></div>`;
+    if (tempMarker) { map.removeLayer(tempMarker); tempMarker = null; }
+    cancelMapClick();
+    setTimeout(() => map.invalidateSize(), 100);
+  }
+  if (n === 4) {
+    document.getElementById("contact-name").value = "";
+    document.getElementById("contact-info").value = "";
+    document.getElementById("rate-limit-msg").style.display = "none";
+  }
+}
+
+function checkDesc() {
+  const val = document.getElementById("description").value;
+  const counter = document.getElementById("desc-counter");
+  if (counter) counter.textContent = val.length + " / 500";
+}
+
+// ─── ✅ SEGURIDAD: Enviar reclamo con todas las protecciones ───────
+function submitReport() {
+  // 1. HONEYPOT: si está lleno, es un bot — simular éxito sin guardar
+  const hp = document.getElementById('hp-website');
+  if (hp && hp.value !== '') {
+    console.log('Bot bloqueado (honeypot)');
+    document.querySelectorAll(".form-section").forEach(s => s.classList.remove("active"));
+    document.getElementById("success-msg").style.display = "block";
+    return;
+  }
+
+  // 2. RATE LIMITING: max 1 envío por minuto por sesión
+  if (!canSubmit()) {
+    document.getElementById("rate-limit-msg").style.display = "block";
+    document.getElementById("btn-submit").disabled = true;
+    setTimeout(() => {
+      document.getElementById("rate-limit-msg").style.display = "none";
+      document.getElementById("btn-submit").disabled = false;
+    }, RATE_LIMIT_MS - (Date.now() - lastSubmitTime));
+    return;
+  }
+
+  // 3. VALIDACIÓN DE DESCRIPCIÓN: mínimo 5 caracteres
+  const descVal = document.getElementById("description").value.trim();
+  if (descVal.length < 5) {
+    alert('Por favor describí el problema con al menos 5 caracteres.');
+    return;
+  }
+
+  // 4. reCAPTCHA: requerir token válido
+  if (!rcToken) {
+    document.getElementById("btn-submit").disabled = true;
+    document.getElementById("btn-submit").textContent = "Verificando...";
+    refreshToken(function() {
+      document.getElementById("btn-submit").disabled = false;
+      document.getElementById("btn-submit").textContent = "Enviar reclamo ✓";
+      if (!rcToken) {
+        alert("Error de verificación. Por favor recargá la página.");
+        return;
+      }
+      doSubmit();
+    });
+    return;
+  }
+
+  doSubmit();
+}
+
+function doSubmit() {
+  const contactName = document.getElementById("contact-name").value.trim().substring(0, 100);
+  const contactInfo = document.getElementById("contact-info").value.trim().substring(0, 100);
+  const desc = document.getElementById("description").value.trim().substring(0, 500);
+
+  // ✅ SEGURIDAD: timestamp numérico (compatible con reglas Firebase que usan isNumber() y <= now)
+  const report = {
+    cats: selectedCats.slice(),
+    description: desc,
+    lat: selectedLoc.lat,
+    lng: selectedLoc.lng,
+    timestamp: Date.now(),        // ← CORREGIDO: era toISOString() (string), ahora es número
+    status: "Pendiente",
+    contactName: contactName || null,
+    contactInfo: contactInfo || null,
+    rcToken: rcToken || null
+  };
+
+  // Validación final del lado cliente
+  if (!validateReport(report)) {
+    alert("Datos inválidos. Verificá la ubicación y descripción.");
+    return;
+  }
+
+  // Usar el token y luego invalidarlo
+  const usedToken = rcToken;
+  rcToken = null;
+
+  document.getElementById("btn-submit").disabled = true;
+  document.getElementById("btn-submit").textContent = "Enviando...";
+
+  db.ref("reports").push(report).then(() => {
+    markSubmitted(); // ← registrar tiempo de envío para rate limiting
+    refreshToken();  // ← renovar token para próximo uso
+    if (tempMarker) { map.removeLayer(tempMarker); tempMarker = null; }
+    map.flyTo([report.lat, report.lng], 16, { duration: 1 });
+    document.querySelectorAll(".form-section").forEach(s => s.classList.remove("active"));
+    document.getElementById("success-msg").style.display = "block";
+    document.getElementById("btn-submit").disabled = false;
+    document.getElementById("btn-submit").textContent = "Enviar reclamo ✓";
+  }).catch(err => {
+    console.error("Error Firebase:", err);
+    rcToken = usedToken; // restaurar token si falló
+    document.getElementById("btn-submit").disabled = false;
+    document.getElementById("btn-submit").textContent = "Enviar reclamo ✓";
+    alert("Error al guardar. Revisá la conexión e intentá de nuevo.");
+  });
+}
+
+// ─── Marcadores en el mapa ─────────────────────────────────────────
+function addReportMarker(id, report) {
+  if (markers[id]) return;
+  const firstIcon = report.cats && report.cats.length > 0 ? report.cats[0].icon : "⚠️";
+  const isSolved = report.status === "Solucionado";
+  const borderColor = isSolved ? "#16A34A" : "#4A2C8A";
+  const bgColor = isSolved ? "#DCFCE7" : "white";
+  const solvedMark = isSolved ? '<span style="position:absolute;bottom:-3px;right:-3px;background:#16A34A;color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;border:2px solid white">✓</span>' : '';
+  const icon = L.divIcon({
+    html: `<div style="position:relative;background:${bgColor};border:2.5px solid ${borderColor};border-radius:50% 50% 50% 0;width:32px;height:32px;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.25)">${solvedMark}<span style="transform:rotate(45deg);font-size:14px">${sanitize(firstIcon)}</span></div>`,
+    className:"", iconAnchor:[16,32], popupAnchor:[0,-32]
+  });
+  const marker = L.marker([report.lat, report.lng], { icon }).addTo(markerLayer);
+
+  // ✅ SEGURIDAD: timestamp puede ser número o string (compatibilidad hacia atrás)
+  const tsVal = typeof report.timestamp === 'number'
+    ? new Date(report.timestamp).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" })
+    : new Date(report.timestamp).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" });
+
+  const catsHtml = (report.cats||[]).map(c=>`<span class="popup-cat-tag">${sanitize(c.icon)} ${sanitize(c.name)}</span>`).join("");
+  marker.bindPopup(`<div class="popup-content"><div class="popup-cats">${catsHtml}</div><div class="pc-desc">${sanitize(report.description)}</div><div class="pc-time">${tsVal}</div></div>`);
+  marker.on("click", () => {
+    switchTab("list");
+    setTimeout(() => { const card = document.getElementById("rc-"+id); if(card) card.scrollIntoView({behavior:"smooth",block:"center"}); }, 200);
+  });
+  markers[id] = marker;
+}
+
+function removeReportMarker(id) {
+  if (markers[id]) { map.removeLayer(markers[id]); delete markers[id]; }
+}
+
+// ─── Escuchar Firebase en tiempo real ─────────────────────────────
+let allReports = {};
+
+function startListening() {
+  db.ref("reports").on("child_added", snap => {
+    allReports[snap.key] = snap.val();
+    addReportMarker(snap.key, snap.val());
+    renderReportsList();
+    updateBadge();
+  });
+  db.ref("reports").on("child_changed", snap => {
+    allReports[snap.key] = snap.val();
+    removeReportMarker(snap.key);
+    addReportMarker(snap.key, snap.val());
+    renderReportsList();
+  });
+  db.ref("reports").on("child_removed", snap => {
+    delete allReports[snap.key];
+    removeReportMarker(snap.key);
+    renderReportsList();
+    updateBadge();
+  });
+  db.ref("reports").once("value", () => {
+    document.getElementById("loading-overlay").style.display = "none";
+  });
+  setTimeout(() => { document.getElementById("loading-overlay").style.display = "none"; }, 2000);
+}
+
+// ─── Lista de reclamos ─────────────────────────────────────────────
+function renderReportsList() {
+  const container = document.getElementById("reports-list");
+  const sorted = Object.entries(allReports).sort((a,b) => {
+    const ta = typeof a[1].timestamp === 'number' ? a[1].timestamp : new Date(a[1].timestamp).getTime();
+    const tb = typeof b[1].timestamp === 'number' ? b[1].timestamp : new Date(b[1].timestamp).getTime();
+    return tb - ta;
+  });
+  if (!sorted.length) {
+    container.innerHTML = `<div class="no-reports"><div class="nr-icon">📍</div><p>No hay reclamos todavía.<br>¡Sé el primero en reportar!</p></div>`;
+    return;
+  }
+  container.innerHTML = sorted.map(([id, r]) => {
+    const tsMs = typeof r.timestamp === 'number' ? r.timestamp : new Date(r.timestamp).getTime();
+    const time = new Date(tsMs).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" });
+    const catsHtml = (r.cats||[]).map(c=>`<span class="rc-cat-tag">${sanitize(c.icon)} ${sanitize(c.name)}</span>`).join("");
+    const isSolved = r.status === "Solucionado";
+    const btnText = isSolved ? "✓ Solucionado" : "Marcar como solucionado";
+    return `<div class="report-card ${isSolved ? 'report-solved' : ''}" id="rc-${id}" onclick="focusReport(${r.lat}, ${r.lng})">
+      <div class="rc-top"><div class="rc-cats">${catsHtml}</div><span class="rc-time">${time}</span></div>
+      <div class="rc-desc">${sanitize(r.description)}</div>
+      <div class="rc-loc">
+        <span>📍 ${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}<span class="status-badge">${sanitize(r.status)}</span></span>
+        <button class="btn-solve" onclick="solveReport(event,'${id}')" ${isSolved ? 'disabled' : ''}>${btnText}</button>
+        <button class="btn-delete" onclick="deleteReport(event,'${id}')">🗑️ Eliminar</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function focusReport(lat, lng) {
+  map.flyTo([lat, lng], 17, { duration: 1 });
+}
+
+function updateBadge() {
+  const n = Object.keys(allReports).length;
+  document.getElementById("total-badge").textContent = n + " reporte" + (n !== 1 ? "s" : "");
+}
+
+// ─── Admin: marcar como solucionado ───────────────────────────────
+function solveReport(e, id) {
+  e.stopPropagation();
+  if (!isAdmin) return;
+  if (confirm("¿Marcás este reclamo como solucionado?")) {
+    db.ref("reports/" + id).update({ status: "Solucionado" });
+  }
+}
+
+// ─── Admin: eliminar reclamo ───────────────────────────────────────
+function deleteReport(e, id) {
+  e.stopPropagation();
+  if (!isAdmin) return;
+  if (confirm("¿Eliminás definitivamente este reclamo?")) {
+    db.ref("reports/" + id).remove();
+  }
+}
+
+// ─── Admin: login / logout (usa Firebase Auth — seguro) ───────────
+function openAdminModal() {
+  document.getElementById("admin-modal").classList.add("visible");
+  setTimeout(() => document.getElementById("admin-email").focus(), 100);
+}
+function closeAdminModal() {
+  document.getElementById("admin-modal").classList.remove("visible");
+  document.getElementById("login-error").style.display = "none";
+  document.getElementById("admin-password").value = "";
+}
+function doAdminLogin() {
+  const email = document.getElementById("admin-email").value.trim();
+  const pass = document.getElementById("admin-password").value;
+  document.getElementById("login-error").style.display = "none";
+  auth.signInWithEmailAndPassword(email, pass)
+    .then(() => { closeAdminModal(); })
+    .catch(() => { document.getElementById("login-error").style.display = "block"; });
+}
+function adminLogout() {
+  auth.signOut();
+}
+
+// Abrir modal admin con candado oculto
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.shiftKey && e.key === 'A') openAdminModal();
+});
+
+auth.onAuthStateChanged(user => {
+  isAdmin = !!user;
+  document.getElementById("admin-banner").classList.toggle("visible", isAdmin);
+  document.getElementById("sidebar").classList.toggle("admin-mode", isAdmin);
+  renderReportsList();
+});
+
+// ─── Formulario ───────────────────────────────────────────────────
+function resetForm() {
+  selectedCats = []; selectedLoc = null;
+  document.getElementById("description").value = "";
+  document.getElementById("btn-next-1").disabled = true;
+  document.getElementById("selected-count").style.display = "none";
+  document.querySelectorAll(".cat-item").forEach(c => c.classList.remove("selected"));
+  document.getElementById("success-msg").style.display = "none";
+  document.getElementById("sec-1").classList.add("active");
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById("step-" + i);
+    el.classList.remove("active","done");
+    if (i===1) el.classList.add("active");
+  }
+}
+
+function switchTab(tab) {
+  document.querySelectorAll(".tab").forEach((t,i) => {
+    t.classList.toggle("active", (i===0&&tab==="form")||(i===1&&tab==="list"));
+  });
+  document.getElementById("panel-form").classList.toggle("active", tab==="form");
+  document.getElementById("panel-list").classList.toggle("active", tab==="list");
+  if (tab === "list") renderReportsList();
+}
+
+// ─── Compartir app ─────────────────────────────────────────────────
+function compartirApp() {
+  if (navigator.share) {
+    navigator.share({
+      title: 'Magdalena Reporta',
+      text: '📍 Reportá problemas en tu municipio y ayudá a mejorar Magdalena. ¡Sumate!',
+      url: 'https://epa-magdalena-reporta.vercel.app/'
+    });
+  } else {
+    navigator.clipboard.writeText('https://epa-magdalena-reporta.vercel.app/');
+    alert('¡Link copiado! Compartilo con tus vecinos.');
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────
+buildCatList();
+initMap();
+startListening();
+
+// ─── ✅ SEGURIDAD: reCAPTCHA v3 — renovar token cada 90 segundos ──
+// IMPORTANTE: el token se valida en las reglas Firebase.
+// Para validación completa del lado servidor, activar Firebase App Check
+// en la consola: Firebase > App Check > Registrar app con reCAPTCHA v3
+var rcToken = null;
+var rcCallbacks = [];
+function refreshToken(cb) {
+  if (cb) rcCallbacks.push(cb);
+  try {
+    if (typeof grecaptcha !== "undefined") {
+      grecaptcha.ready(function() {
+        grecaptcha.execute('6LfmgccsAAAACIK-9gOuG8m8xtpjCCi7llHYGlm', {action: "submit"})
+          .then(function(t) {
+            rcToken = t;
+            // ejecutar callbacks pendientes
+            while (rcCallbacks.length) rcCallbacks.shift()();
+            setTimeout(refreshToken, 90000);
+          }).catch(function(){ setTimeout(refreshToken, 5000); });
+      });
+    }
+  } catch(e) { setTimeout(refreshToken, 5000); }
+}
+setTimeout(refreshToken, 500);
+
+</script>
+</body>
+</html>
