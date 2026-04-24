@@ -1,5 +1,5 @@
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://unpkg.com; connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.google.com https://*.gstatic.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://*.tile.openstreetmap.org https://*.gstatic.com; frame-src https://www.google.com; font-src 'self' data:;
   X-Content-Type-Options: nosniff
-  X-Frame-Options: DECY
+  X-Frame-Options: DENY
   Referrer-Policy: no-referrer-when-downgrade
