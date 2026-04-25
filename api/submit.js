@@ -2,11 +2,11 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
-si (!getApps().length) {
-  inicializarAplicación({
-    credencial: certificado({
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
-      Correo electrónico del cliente: process.env.FIREBASE_CLIENT_EMAIL,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
   });
@@ -15,7 +15,7 @@ si (!getApps().length) {
 const db = getFirestore();
 const auth = getAuth();
 
-// Limitación de velocidad en memoria (se resetea si la función se reinicia)
+// Rate limiting en memoria (se resetea si la función se reinicia)
 const rateLimitMap = new Map();
 const RATE_LIMIT_MS = 60000; // 1 minuto
 
@@ -24,12 +24,12 @@ const VALID_CAT_IDS = [
   'agua','aguas','faltlum','tacho','rampa','zanja','otro'
 ];
 
-función sanitizar(str) {
-  si (!str) devuelve '';
-  devolver String(str)
-    .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>')
-    .replace(/"/g, '"').replace(/'/g, ''')
-    .replace(/\\/g, '\').trim();
+function sanitize(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;')
+    .replace(/\\/g, '&#092;').trim();
 }
 
 export default async function handler(req, res) {
@@ -38,19 +38,19 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Método no permitido' });
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  intentar {
+  try {
     // 1 — Verificar token de Google
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'No autorizado' });
     }
     const idToken = authHeader.split('Bearer ')[1];
-    sea ​​token decodificado;
-    intentar {
+    let decodedToken;
+    try {
       decodedToken = await auth.verifyIdToken(idToken);
-    } atrapar {
+    } catch {
       return res.status(401).json({ error: 'Token inválido' });
     }
 
@@ -58,20 +58,20 @@ export default async function handler(req, res) {
     const userEmail = decodedToken.email || '';
     const userName = decodedToken.name || '';
 
-    // 2 — Limitación de velocidad por usuario
-    const ahora = Fecha.ahora();
+    // 2 — Rate limiting por usuario
+    const now = Date.now();
     const lastSubmit = rateLimitMap.get(uid) || 0;
-    si (ahora - últimoEnvío < LÍMITE_RATE_LIMIT_MS) {
-      return res.status(429).json({ error: 'Espera un momento antes de enviar otro reclamo' });
+    if (now - lastSubmit < RATE_LIMIT_MS) {
+      return res.status(429).json({ error: 'Esperá un momento antes de enviar otro reclamo' });
     }
 
     // 3 — Validar datos
-    const { gatos, descripción, latitud, longitud } = req.body;
+    const { cats, description, lat, lng } = req.body;
 
-    si (typeof lat !== 'number' || typeof lng !== 'number') {
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
       return res.status(400).json({ error: 'Coordenadas inválidas' });
     }
-    Si (typeof description !== 'string' || description.length > 300) {
+    if (typeof description !== 'string' || description.length > 300) {
       return res.status(400).json({ error: 'Descripción inválida' });
     }
     if (!Array.isArray(cats) || cats.length === 0) {
@@ -79,15 +79,15 @@ export default async function handler(req, res) {
     }
 
     // 4 — Validar categorías contra lista oficial
-    const safeCats = gatos
+    const safeCats = cats
       .filter(c => VALID_CAT_IDS.includes(c.id))
       .map(c => ({
-        id: sanitizar(c.id),
-        nombre: sanitizar(c.name),
-        icono: sanitizar(c.icon)
+        id: sanitize(c.id),
+        name: sanitize(c.name),
+        icon: sanitize(c.icon)
       }));
 
-    Si (safeCats.length === 0) {
+    if (safeCats.length === 0) {
       return res.status(400).json({ error: 'Categorías inválidas' });
     }
 
@@ -97,41 +97,41 @@ export default async function handler(req, res) {
     const safeDesc = sanitize(description).substring(0, 300);
 
     // 6 — Guardar en Firestore
-    const informe = {
-      gatos: gatos seguros,
-      descripción: safeDesc,
-      latitud,
-      largo,
-      marca de tiempo: new Date().toISOString(),
-      estado: 'Pendiente',
-      nombreContacto: nombreContacto || nulo,
-      informaciónDeContacto: informaciónDeContacto || nulo,
+    const report = {
+      cats: safeCats,
+      description: safeDesc,
+      lat,
+      lng,
+      timestamp: new Date().toISOString(),
+      status: 'Pendiente',
+      contactName: contactName || null,
+      contactInfo: contactInfo || null,
       userUid: uid,
-      nombre de usuario,
-      Correo electrónico del usuario,
+      userName,
+      userEmail,
     };
 
     const docRef = await db.collection('reports').add(report);
 
-    // 7 — Límite de tasa de Marcar
+    // 7 — Marcar rate limit
     rateLimitMap.set(uid, now);
 
     // 8 — Respaldo a Google Sheets (silencioso)
     const sheetsUrl = process.env.SHEETS_WEBHOOK_URL;
-    si (sheetsUrl) {
+    if (sheetsUrl) {
       const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
-      obtener(sheetsUrl, {
-        método: 'POST',
-        modo: 'no-cors',
-        encabezados: { 'Content-Type': 'application/json' },
-        cuerpo: JSON.stringify({ ...report, mapsUrl, secret: process.env.SHEETS_TOKEN })
+      fetch(sheetsUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...report, mapsUrl, secret: process.env.SHEETS_TOKEN })
       }).catch(() => {});
     }
 
     return res.status(200).json({ ok: true, id: docRef.id });
 
-  } capturar (error) {
-    console.error('Error al enviar:', err);
+  } catch (err) {
+    console.error('Error submit:', err);
     return res.status(500).json({ error: 'Error al guardar el reclamo' });
   }
 }
