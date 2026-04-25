@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>Magdalena Reporta</title>
+<meta property="og:title" content="Magdalena Reporta 🗺️"/>
+<meta property="og:description" content="Mapa ciudadano de reportes. Denunciá problemas en tu localidad..."/>
+<meta property="og:image" content="https://epa-magdalena-reporta.vercel.app/epa-bot.png"/>
+<meta property="og:image:width" content="600"/>
+<meta property="og:image:height" content="700"/>
+<meta name="twitter:image" content="https://epa-magdalena-reporta.vercel.app/epa-bot.png"/>
+<meta property="og:url" content="https://epa-magdalena-reporta.vercel.app/"/>
+<meta property="og:type" content="website"/>
+<meta name="description" content="Mapa ciudadano de reportes. Denunciá problemas en tu localidad..."/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="Magdalena Reporta 🗺️"/>
+<meta name="twitter:description" content="Mapa ciudadano de reportes. Denunciá problemas en tu localidad..."/>
+<meta name="referrer" content="no-referrer-when-downgrade"/>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+<script src="https://www.google.com/recaptcha/api.js?render=6LcjjcgsAAAAKU1MEcWlVB4CH95aozcjKAJ0zSM"></script>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+.leaflet-container img.leaflet-tile { mix-blend-mode: normal !important; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #F3F0FA; --surface: #FDFBFF; --surface2: #EAE4F5;
+  --accent: #4A2C8A; --accent2: #7B52C7; --accent-light: #EDE7FB;
+  --accent-border: #C4B0EF; --text: #1A1520; --text2: #52456B;
+  --text3: #9080AA; --border: #D8CFF0; --radius: 12px; --radius-sm: 8px;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; -webkit-tap-highlight-color: transparent; }
+header { background: var(--accent); color: white; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 62px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 8px rgba(74,44,138,0.25); }
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-logo { width: 36px; height: 36px; background: rgba(255,255,255,0.18); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+header p { font-size: 11px; opacity: 0.72; margin-top: 1px; }
+#total-badge { background: rgba(255,255,255,0.2); padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.layout { display: grid; grid-template-columns: 370px 1fr; height: calc(100vh - 62px); }
+#sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.tabs { display: flex; border-bottom: 1px solid var(--border); }
+.tab { flex: 1; padding: 13px; font-size: 13px; font-weight: 500; text-align: center; cursor: pointer; color: var(--text2); border: none; background: none; border-bottom: 2.5px solid transparent; transition: all 0.2s; font-family: inherit; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover:not(.active) { background: var(--surface2); }
+.panel { flex: 1; overflow-y: auto; display: none; padding: 20px; }
+.panel.active { display: block; }
+.form-title { font-size: 19px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.form-subtitle { font-size: 13px; color: var(--text2); margin-bottom: 20px; line-height: 1.5; }
+.steps { display: flex; margin-bottom: 24px; position: relative; }
+.steps::before { content: ""; position: absolute; top: 14px; left: 14px; right: 14px; height: 2px; background: var(--border); z-index: 0; }
+.step-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; position: relative; z-index: 1; }
+.step-circle { width: 28px; height: 28px; border-radius: 50%; background: var(--surface2); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: var(--text3); transition: all 0.3s; }
+.step-item.active .step-circle { background: var(--accent); border-color: var(--accent); color: white; }
+.step-item.done .step-circle { background: var(--accent2); border-color: var(--accent2); color: white; }
+.step-label { font-size: 11px; color: var(--text3); text-align: center; }
+.step-item.active .step-label { color: var(--accent); font-weight: 500; }
+.step-item.done .step-label { color: var(--accent2); }
+.form-section { display: none; }
+.form-section.active { display: block; }
+.field-label { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; display: block; }
+.field-hint { font-size: 12px; color: var(--text3); margin-bottom: 10px; line-height: 1.5; }
+.field-hint.multi { color: var(--accent2); font-weight: 500; margin-bottom: 10px; }
+#selected-count { display: none; font-size: 12px; background: var(--accent); color: white; padding: 3px 10px; border-radius: 20px; margin-left: 8px; font-weight: 500; }
+.cat-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+.cat-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.15s; background: var(--surface); user-select: none; -webkit-user-select: none; }
+.cat-item:hover { border-color: var(--accent2); background: var(--accent-light); }
+.cat-item.selected { border-color: var(--accent); background: var(--accent-light); }
+.cat-checkbox { width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid var(--border); flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.15s; background: white; }
+.cat-item.selected .cat-checkbox { background: var(--accent); border-color: var(--accent); }
+.cat-checkbox-tick { display: none; color: white; font-size: 11px; font-weight: 700; }
+.cat-item.selected .cat-checkbox-tick { display: block; }
+.cat-icon { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
+.cat-name { font-size: 13px; font-weight: 500; color: var(--text); flex: 1; }
+textarea { width: 100%; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: inherit; font-size: 14px; color: var(--text); background: var(--surface); resize: none; transition: border-color 0.2s; outline: none; min-height: 80px; line-height: 1.5; -webkit-appearance: none; }
+textarea:focus { border-color: var(--accent); }
+textarea.invalid { border-color: #C0392B; }
+.desc-counter { font-size: 12px; text-align: right; margin-top: 4px; font-weight: 500; }
+.desc-counter.red { color: #C0392B; }
+.desc-counter.green { color: #16A34A; }
+.loc-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.loc-btn-big { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 14px; background: var(--surface); color: var(--text); transition: all 0.15s; width: 100%; text-align: left; -webkit-appearance: none; }
+.loc-btn-big:hover { border-color: var(--accent2); background: var(--accent-light); }
+.loc-btn-big.selected { border-color: var(--accent); background: var(--accent-light); }
+.loc-btn-icon { font-size: 18px; }
+.loc-btn-info strong { display: block; font-weight: 500; font-size: 13px; }
+.loc-btn-info span { font-size: 11px; color: var(--text3); }
+#location-display { background: var(--accent-light); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; color: var(--accent); margin-top: 8px; display: none; }
+.btn-row { display: flex; gap: 8px; margin-top: 20px; }
+.btn { padding: 11px 20px; border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; -webkit-appearance: none; }
+.btn-primary { background: var(--accent); color: white; flex: 1; }
+.btn-primary:hover { background: #371f6b; }
+.btn-primary:disabled { opacity: 0.38; cursor: not-allowed; }
+.btn-secondary { background: none; border: 1.5px solid var(--border); color: var(--text2); font-family: inherit; }
+.btn-secondary:hover { background: var(--surface2); }
+#success-msg { display: none; text-align: center; padding: 10px 0 20px; }
+.success-icon { width: 60px; height: 60px; background: var(--accent-light); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; margin: 0 auto 14px; }
+#success-msg h3 { font-size: 17px; font-weight: 700; margin-bottom: 10px; color: var(--accent); }
+#success-msg p { font-size: 13px; color: var(--text2); line-height: 1.6; }
+#success-msg .epa { font-size: 15px; font-weight: 700; color: var(--accent); margin-top: 10px; letter-spacing: 0.5px; }
+#reports-list { display: flex; flex-direction: column; gap: 10px; }
+.report-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; transition: all 0.15s; }
+.report-card:hover { border-color: var(--accent2); box-shadow: 0 2px 8px rgba(74,44,138,0.08); }
+.rc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.rc-cats { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
+.rc-cat-tag { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-light); border: 1px solid var(--accent-border); color: var(--accent); padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+.rc-time { font-size: 11px; color: var(--text3); white-space: nowrap; }
+.rc-desc { font-size: 12px; color: var(--text2); line-height: 1.4; margin-bottom: 6px; }
+.rc-loc { font-size: 11px; color: var(--text3); display: flex; align-items: center; justify-content: space-between; }
+.status-badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 500; background: #EDE7FB; color: #4A2C8A; margin-left: 6px; }
+.no-reports { text-align: center; padding: 40px 20px; color: var(--text3); font-size: 13px; }
+.no-reports .nr-icon { font-size: 32px; margin-bottom: 10px; }
+.btn-solve { display: none; }
+.admin-mode .btn-solve { display: inline-block; }
+.btn-delete { background: #FCEAEA; border: 1px solid #F5BFBF; color: #C0392B; font-size: 11px; padding: 3px 10px; border-radius: 20px; cursor: pointer; font-family: inherit; font-weight: 500; display: none; }
+.btn-delete:hover { background: #F5BFBF; }
+.admin-mode .btn-delete { display: inline-block; }
+#admin-banner { display: none; background: #4A2C8A; color: white; text-align: center; padding: 6px; font-size: 12px; font-weight: 500; }
+#admin-banner.visible { display: block; }
+footer { text-align: center; padding: 8px; }
+#admin-lock { background: none; border: none; cursor: pointer; font-size: 13px; color: var(--border); opacity: 0.3; transition: opacity 0.2s; padding: 4px 8px; }
+#admin-lock:hover { opacity: 1; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 2000; align-items: center; justify-content: center; }
+.modal-overlay.visible { display: flex; }
+.modal { background: white; border-radius: var(--radius); padding: 28px 24px; width: 320px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+.modal h3 { font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.modal p { font-size: 13px; color: var(--text2); margin-bottom: 18px; }
+.modal input { width: 100%; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: inherit; font-size: 14px; color: var(--text); outline: none; margin-bottom: 12px; -webkit-appearance: none; }
+.modal input:focus { border-color: var(--accent); }
+.modal-error { font-size: 12px; color: #C0392B; margin-bottom: 10px; display: none; }
+.modal-btns { display: flex; gap: 8px; }
+#map-panel { position: relative; }
+#map { width: 100%; height: 100%; }
+#map-hint { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: white; padding: 9px 18px; border-radius: 20px; font-size: 13px; font-weight: 500; z-index: 1000; pointer-events: none; display: none; white-space: nowrap; box-shadow: 0 4px 14px rgba(74,44,138,0.35); }
+.leaflet-popup-content-wrapper { border-radius: 10px !important; box-shadow: 0 4px 20px rgba(74,44,138,0.15) !important; }
+.popup-content { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 2px; min-width: 180px; }
+.popup-cats { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.popup-cat-tag { display: inline-flex; align-items: center; gap: 3px; background: #EDE7FB; color: #4A2C8A; padding: 2px 7px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+.popup-content .pc-desc { font-size: 13px; color: #1A1520; margin-bottom: 4px; line-height: 1.4; }
+.popup-content .pc-time { font-size: 11px; color: #9080AA; }
+#loading-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 3000; }
+.spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-overlay p { font-size: 13px; color: var(--text3); }
+@media (max-width: 700px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  #sidebar { max-height: 56vh; }
+  #map-panel { min-height: 44vh; }
+}
+/* Honeypot: absolutamente invisible */
+.hp-field { position: absolute; left: -9999px; top: -9999px; opacity: 0; height: 0; width: 0; overflow: hidden; pointer-events: none; }
+/* Google Sign-In */
+#google-signin-section { text-align: center; padding: 10px 0; }
+.btn-google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 12px 20px; background: white; border: 1.5px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; transition: all 0.15s; margin-top: 12px; }
+.btn-google:hover { background: var(--surface2); border-color: var(--accent2); }
+.btn-google img { width: 20px; height: 20px; }
+#user-info { display: none; background: var(--accent-light); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.privacy-note { font-size: 12px; color: var(--text3); line-height: 1.6; text-align: center; margin-bottom: 4px; background: var(--surface2); padding: 10px 14px; border-radius: var(--radius-sm); }
+</style>
+
+</head>
+<body>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <p>Conectando...</p>
+</div>
+
+<div id="admin-banner">🔐 Modo administrador activo — podés eliminar reclamos · <button onclick="adminLogout()" style="background:none;border:none;color:white;cursor:pointer;font-size:12px;text-decoration:underline;">Cerrar sesión</button></div>
+
+<header>
+  <div class="header-left" onclick="goToFormStart()" style="cursor:pointer;">
+    <div class="header-logo">📍</div>
+    <div>
+      <h1>Magdalena Reporta</h1>
+      <p>Informá problemas en tu municipio</p>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+    <div id="total-badge">0 reportes</div>
+    <button id="header-logout" onclick="auth.signOut()" style="display:none;background:none;border:none;color:white;font-size:9px;opacity:0.6;cursor:pointer;padding:0;text-decoration:underline;">Cerrar sesión</button>
+  </div>
+</header>
+
+<div class="layout">
+  <div id="sidebar">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('form')">✏️ Nuevo reclamo</button>
+      <button class="tab" onclick="switchTab('list')">📋 Ver reclamos</button>
+    </div>
+
+    <div class="panel active" id="panel-form">
+
+      <p class="form-title">Nuevo reclamo</p>
+      <p class="form-subtitle">Completá los pasos para registrar un problema en Magdalena.</p>
+
+      <div class="steps">
+        <div class="step-item active" id="step-1"><div class="step-circle">1</div><div class="step-label">Tipo</div></div>
+        <div class="step-item" id="step-2"><div class="step-circle">2</div><div class="step-label">Descripción</div></div>
+        <div class="step-item" id="step-3"><div class="step-circle">3</div><div class="step-label">Ubicación</div></div>
+        <div class="step-item" id="step-4"><div class="step-circle">4</div><div class="step-label">Contacto</div></div>
+      </div>
+
+      <div class="form-section active" id="sec-1">
+        <div style="display:flex; align-items:center; margin-bottom:4px;">
+          <label class="field-label" style="margin-bottom:0">¿Qué problemas querés reportar?</label>
+          <span id="selected-count"></span>
+        </div>
+        <p class="field-hint multi">Podés seleccionar más de uno.</p>
+        <div class="btn-row" style="margin-top:0; margin-bottom:12px;">
+          <button class="btn btn-primary" id="btn-next-1-top" onclick="goToStep(2)" disabled>Siguiente →</button>
+        </div>
+        <div class="cat-list" id="cat-list"></div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btn-next-1" onclick="goToStep(2)" disabled>Siguiente →</button>
+        </div>
+      </div>
+
+      <div class="form-section" id="sec-2">
+        <label class="field-label">Describí el problema <span style="font-size:11px;color:var(--text3);font-weight:400;">(opcional)</span></label>
+        <p class="field-hint">Contá brevemente qué está pasando. Por ejemplo: "Hay un pozo grande frente al número 450".</p>
+        <textarea id="description" placeholder="Escribí la descripción acá..." oninput="checkDesc()" maxlength="500"></textarea>
+        <div class="desc-counter" id="desc-counter">0 / 500</div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goToStep(1)">← Volver</button>
+          <button class="btn btn-primary" id="btn-next-2" onclick="goToStep(3)">Siguiente →</button>
+        </div>
+      </div>
+
+      <div class="form-section" id="sec-3">
+        <label class="field-label">¿Dónde está el problema?</label>
+        <div class="loc-options">
+          <button class="loc-btn-big" id="btn-gps" onclick="useGPS()">
+            <div class="loc-btn-icon">📍</div>
+            <div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>Detecta tu posición automáticamente</span></div>
+          </button>
+          <button class="loc-btn-big" id="btn-map" onclick="useMapClick()">
+            <div class="loc-btn-icon">🗺️</div>
+            <div class="loc-btn-info"><strong>Hacer clic en el mapa</strong><span>Marcá el punto exacto en el mapa</span></div>
+          </button>
+        </div>
+        <div id="location-display">📍 <span id="loc-text"></span></div>
+        <div id="location-confirmed" style="display:none;background:#e6f4ea;border:1.5px solid #34a853;border-radius:10px;padding:12px 14px;margin-top:10px;align-items:center;gap:10px;"><span style="font-size:20px">✅</span><div><strong style="display:block;font-size:13px;font-weight:700;color:#1e7e34">¡Posición marcada en el mapa!</strong><span style="font-size:11px;color:#2d6a4f">Podés avanzar al siguiente paso.</span></div></div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="cancelMapClick(); goToStep(2)">← Volver</button>
+          <button class="btn btn-primary" id="btn-next-3" onclick="goToStep(4)" disabled>Siguiente →</button>
+        </div>
+      </div>
+
+      <div class="form-section" id="sec-4">
+        <!-- Login con Google -->
+        <div id="user-logged-out">
+          <label class="field-label" style="text-align:center;display:block;">Verificá tu identidad</label>
+          <div style="background:var(--surface2);border-radius:var(--radius);padding:16px;text-align:center;margin-bottom:16px;">
+            <p class="privacy-note">🔒 Tu cuenta de Google se usa solo para verificar que sos una persona real. Tu nombre y email <strong>no serán publicados ni compartidos</strong>.</p>
+            <button class="btn-google" onclick="signInWithGoogle()" style="margin-top:12px;">
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"/>
+              Continuar con Google
+            </button>
+          </div>
+        </div>
+
+        <!-- Usuario verificado -->
+        <div id="user-logged-in" style="display:none;">
+          <div style="background:var(--accent-light);border:1px solid var(--accent-border);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;color:var(--accent);margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+            <span>✅</span><span id="user-display-name">Verificado</span>
+            <button onclick="signOutGoogle()" style="margin-left:auto;background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;text-decoration:underline;">Cambiar cuenta</button>
+          </div>
+
+          <label class="field-label">Contacto <span style="font-size:11px;color:var(--text3);font-weight:400;">(opcional)</span></label>
+          <p class="field-hint">Si querés que nos comuniquemos con vos, dejanos un medio de contacto.</p>
+          <input type="text" id="contact-name" placeholder="Tu nombre (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
+          <input type="text" id="contact-info" placeholder="WhatsApp, email o teléfono (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
+        </div>
+
+        <!-- Honeypot -->
+        <div class="hp-field" aria-hidden="true" tabindex="-1">
+          <input type="text" name="website" id="hp-website" tabindex="-1" autocomplete="off" aria-hidden="true"/>
+        </div>
+        <div id="rate-limit-msg" style="display:none;background:#FFF3CD;border:1px solid #FFEAA7;color:#856404;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:10px;text-align:center;">⏳ Por favor esperá un momento antes de enviar otro reclamo.</div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goToStep(3)">← Volver</button>
+          <button class="btn btn-primary" id="btn-submit" onclick="submitReport()" disabled>Enviar reclamo ✓</button>
+        </div>
+      </div>
+
+      <div id="success-msg">
+        <div class="success-icon">✅</div>
+        <h3>¡Reclamo enviado! ✔️</h3>
+        <p>Gracias por sumar tu voz.<br><br>Cuantas más voces se escuchen, más fuerza tenemos para impulsar soluciones.<br><br>Entre todos, podemos transformar la realidad.</p>
+        <p class="epa">EPA MAGDALENA</p>
+        <a href="https://magdalena-reporta-estadisticas.vercel.app/" target="_blank" style="display:block;text-align:center;margin-top:16px;padding:12px 20px;background:#7B2FBE;color:white;text-decoration:none;border-radius:8px;font-size:14px;font-weight:500;">📊 Ver Estadísticas</a>
+        <button onclick="compartirApp()" style="display:block;width:100%;text-align:center;margin-top:12px;padding:12px 20px;background:#25D366;color:white;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;">🔗 Invitá a otros vecinos a ser parte</button>
+      </div>
+
+    </div>
+
+    <div class="panel" id="panel-list">
+      <a href="https://magdalena-reporta-estadisticas.vercel.app/" target="_blank" style="display:block;text-align:center;margin-bottom:16px;padding:12px 20px;background:#7B2FBE;color:white;text-decoration:none;border-radius:8px;font-size:14px;font-weight:500;">📊 Ver Estadísticas</a>
+      <div id="reports-list"></div>
+    </div>
+  </div>
+
+  <div id="map-panel">
+    <div id="map"></div>
+    <div id="map-hint">👆 Hacé clic en el mapa para marcar el problema</div>
+  </div>
+</div>
+
+<footer>
+  <button id="admin-lock" onclick="openAdminModal()" title="Acceso administrador">🔐</button>
+</footer>
+
+<div class="modal-overlay" id="admin-modal">
+  <div class="modal">
+    <h3>Acceso administrador</h3>
+    <p>Ingresá con tu cuenta de administrador.</p>
+    <input type="email" id="admin-email" placeholder="Email" autocomplete="off"/>
+    <input type="password" id="admin-password" placeholder="Contraseña" onkeydown="if(event.key==='Enter') doAdminLogin()"/>
+    <p class="modal-error" id="login-error">Email o contraseña incorrectos.</p>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" onclick="closeAdminModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="doAdminLogin()">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Firebase config — PROYECTO NUEVO v2 ──────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyBOaptX3HKd9LYKXs46GLmb-tFbTzAb1Ec",
+  authDomain: "magdalena-reporta-v2.firebaseapp.com",
+  projectId: "magdalena-reporta-v2",
+  storageBucket: "magdalena-reporta-v2.firebasestorage.app",
+  messagingSenderId: "199471654104",
+  appId: "1:199471654104:web:180223706d7015d25963ad"
+};
+firebase.initializeApp(firebaseConfig);
+
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+// ─── Categorías (12 oficiales — validación estricta) ──────────────
+const CATS = [
+  { id:"obra",      name:"Obra sin terminar",             icon:"🚧" },
+  { id:"calle",     name:"Calle en mal estado",            icon:"🕳️" },
+  { id:"luminaria", name:"Luminaria sin funcionamiento",   icon:"💡" },
+  { id:"basura",    name:"Basura acumulada",               icon:"🗑️" },
+  { id:"cloaca",    name:"Sin cloaca",                     icon:"🔧" },
+  { id:"agua",      name:"Sin red de agua potable",        icon:"💧" },
+  { id:"aguas",     name:"Aguas servidas",                 icon:"☢️" },
+  { id:"faltlum",   name:"Falta de luminaria",             icon:"🔦" },
+  { id:"tacho",     name:"Sin tacho de basura",            icon:"🪣" },
+  { id:"rampa",     name:"Rampa en mal estado",            icon:"♿" },
+  { id:"zanja",     name:"Zanja en mal estado",            icon:"🌊" },
+  { id:"otro",      name:"Otro",                           icon:"⚠️" },
+];
+const VALID_CAT_IDS = CATS.map(function(c){ return c.id; });
+
+// ─── Patrones de ataque conocidos ─────────────────────────────────
+const ATTACK_PATTERNS = [
+  'ontoggle','onerror','onload','onclick','onmouse','onkey',
+  'javascript:','<script','<iframe','<details','<svg','<img',
+  'data:text','eval(','document.','window.','fetch(','xmlhttp',
+  'alert(','confirm(','prompt('
+];
+
+// ✅ reCAPTCHA v3 — pre-cargar token mientras el vecino completa el formulario
+var rcToken = null;
+function preloadRcToken() {
+  try {
+    if (typeof grecaptcha !== 'undefined') {
+      grecaptcha.ready(function() {
+        grecaptcha.execute('6LcjjcgsAAAAKU1MEcWlVB4CH95aozcjKAJ0zSM', {action: 'submit'})
+          .then(function(t) { rcToken = t; })
+          .catch(function() { rcToken = null; });
+      });
+    }
+  } catch(e) { rcToken = null; }
+}
+// Pre-cargar al arrancar — tiene todo el tiempo del formulario para estar listo
+setTimeout(preloadRcToken, 1000);
+// Renovar cada 90 segundos (los tokens expiran)
+setInterval(preloadRcToken, 90000);
+var _formStartTime = null;
+var MIN_FORM_SECONDS = 8; // humano tarda al menos 8 segundos
+
+function startFormTimer() {
+  if (!_formStartTime) _formStartTime = Date.now();
+}
+
+// ─── ✅ Enviar reclamo con todas las capas de seguridad ──────────
+function submitReport() {
+  // CAPA 1: Honeypot
+  var hp = document.getElementById('hp-website');
+  if (hp && hp.value !== '') {
+    document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
+    document.getElementById("success-msg").style.display = "block";
+    return;
+  }
+
+  // CAPA 2: Google login obligatorio
+  if (!currentUser) {
+    alert("Por favor iniciá sesión con Google para enviar el reclamo.");
+    return;
+  }
+
+  // CAPA 3: Timer anti-bot — mínimo 8 segundos desde que arrancó
+  var elapsed = _formStartTime ? (Date.now() - _formStartTime) / 1000 : 0;
+  if (elapsed < MIN_FORM_SECONDS) {
+    // Bot detectado silenciosamente — simular éxito sin guardar
+    document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
+    document.getElementById("success-msg").style.display = "block";
+    return;
+  }
+
+  // CAPA 4: Rate limiting
+  if (!canSubmit()) {
+    var msg = document.getElementById("rate-limit-msg");
+    if (msg) msg.style.display = "block";
+    document.getElementById("btn-submit").disabled = true;
+    setTimeout(function() {
+      if (msg) msg.style.display = "none";
+      document.getElementById("btn-submit").disabled = false;
+    }, RATE_LIMIT_MS - (Date.now() - _lastSubmit));
+    return;
+  }
+
+  // CAPA 5: Descripción opcional — solo sanitizar si existe
+  var desc = document.getElementById("description").value.trim();
+
+  // CAPA 6: Bloquear patrones de ataque XSS conocidos
+  var descLower = desc.toLowerCase();
+  for (var i = 0; i < ATTACK_PATTERNS.length; i++) {
+    if (descLower.indexOf(ATTACK_PATTERNS[i]) !== -1) {
+      alert("La descripción contiene contenido no permitido. Por favor revisá el texto.");
+      return;
+    }
+  }
+
+  // CAPA 7: Validar categorías contra el listado oficial
+  var safeCats = selectedCats
+    .filter(function(c){ return VALID_CAT_IDS.indexOf(c.id) !== -1; })
+    .map(function(c){ return { id: c.id, name: sanitizeInput(c.name), icon: sanitizeInput(c.icon) }; });
+  if (safeCats.length === 0) { alert("Seleccioná al menos una categoría válida."); return; }
+
+  // CAPA 8: Sanitizar TODOS los campos en la entrada antes de guardar
+  var contactName = sanitizeInput(document.getElementById("contact-name").value).substring(0, 100);
+  var contactInfo = sanitizeInput(document.getElementById("contact-info").value).substring(0, 100);
+  var safeDesc = sanitizeInput(desc).substring(0, 500);
+
+  document.getElementById("btn-submit").disabled = true;
+  document.getElementById("btn-submit").textContent = "Enviando...";
+
+  var report = {
+    cats: safeCats,
+    description: safeDesc,
+    lat: selectedLoc.lat,
+    lng: selectedLoc.lng,
+    timestamp: new Date().toISOString(),
+    status: "Pendiente",
+    contactName: contactName || null,
+    contactInfo: contactInfo || null,
+    rcToken: rcToken || null,
+    userUid: currentUser ? currentUser.uid : null,
+    userName: currentUser ? (currentUser.displayName || '') : '',
+    userEmail: currentUser ? (currentUser.email || '') : ''
+  };
+
+  db.collection("reports").add(report).then(function(docRef) {
+    markSubmitted();
+
+    // ✅ Respaldo automático a Google Sheets
+    var sheetsData = {
+      timestamp: report.timestamp,
+      cats: report.cats,
+      description: report.description,
+      lat: report.lat,
+      lng: report.lng,
+      status: report.status,
+      contactName: report.contactName,
+      contactInfo: report.contactInfo,
+      userName: currentUser ? (currentUser.displayName || '') : '',
+      userEmail: currentUser ? (currentUser.email || '') : ''
+    };
+    fetch("https://script.google.com/macros/s/AKfycbwAa2Fmbg5Az6biLb-FGFlFQkXoBTnUnTk3R-j4kTdkwHrffro3yboXETHg2sEbv-5q/exec", {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sheetsData)
+    }).catch(function(){});  // fallo silencioso — Firestore ya guardó
+
+    if (tempMarker) { map.removeLayer(tempMarker); tempMarker = null; }
+    map.flyTo([report.lat, report.lng], 16, { duration: 1 });
+    document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
+    document.getElementById("success-msg").style.display = "block";
+    document.getElementById("btn-submit").disabled = false;
+    document.getElementById("btn-submit").textContent = "Enviar reclamo ✓";
+  }).catch(function(err) {
+    console.error("Error Firestore:", err);
+    document.getElementById("btn-submit").disabled = false;
+    document.getElementById("btn-submit").textContent = "Enviar reclamo ✓";
+    alert("Error al guardar (código: " + (err.code || err.message || "desconocido") + "). Revisá la conexión e intentá de nuevo.");
+  });
+}
+const RATE_LIMIT_MS = 60000;
+var _lastSubmit = 0;
+function canSubmit() {
+  var now = Date.now();
+  if (now - _lastSubmit < RATE_LIMIT_MS) return false;
+  try { var s = sessionStorage.getItem('_ls'); if (s && (now - parseInt(s)) < RATE_LIMIT_MS) return false; } catch(e) {}
+  return true;
+}
+function markSubmitted() {
+  _lastSubmit = Date.now();
+  try { sessionStorage.setItem('_ls', _lastSubmit.toString()); } catch(e) {}
+}
+
+// ─── ✅ Sanitizar: escapa HTML antes de guardar en Firestore ──────
+function sanitizeInput(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+    .replace(/\\/g, '&#092;')
+    .trim();
+}
+
+// ─── Sanitizar para mostrar en UI ─────────────────────────────────
+function sanitize(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+let map, markerLayer, tempMarker;
+let selectedCats = [], selectedLoc = null, mapClickMode = false;
+let markers = {};
+let isAdmin = false;
+let allReports = {};
+
+// ─── Mapa ──────────────────────────────────────────────────────────
+function initMap() {
+  map = L.map("map", { tap: false }).setView([-35.0795, -57.5219], 14);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors", maxZoom: 19, crossOrigin: true
+  }).addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+  map.on("click", onMapClick);
+  setTimeout(function(){ map.invalidateSize(); }, 400);
+}
+
+function onMapClick(e) {
+  if (!mapClickMode) return;
+  selectedLoc = { lat: e.latlng.lat, lng: e.latlng.lng };
+  document.getElementById("loc-text").textContent = e.latlng.lat.toFixed(5) + ", " + e.latlng.lng.toFixed(5);
+  document.getElementById("location-display").style.display = "none";
+  var conf = document.getElementById("location-confirmed");
+  if (conf) conf.style.display = "flex";
+  document.getElementById("btn-next-3").disabled = false;
+  cancelMapClick();
+  document.getElementById("btn-map").classList.add("selected");
+  document.getElementById("btn-map").innerHTML = '<div class="loc-btn-icon">✅</div><div class="loc-btn-info"><strong>Posición marcada</strong><span>Punto fijado en el mapa</span></div>';
+  addTempMarker(e.latlng.lat, e.latlng.lng);
+}
+
+function addTempMarker(lat, lng) {
+  if (tempMarker) map.removeLayer(tempMarker);
+  var icon = L.divIcon({
+    html: '<div style="position:relative;background:white;border:2.5px solid #4A2C8A;border-radius:50% 50% 50% 0;width:32px;height:32px;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.3)"><span style="transform:rotate(45deg);font-size:14px">📍</span></div>',
+    className: "", iconAnchor: [16,32], popupAnchor: [0,-32]
+  });
+  tempMarker = L.marker([lat, lng], { icon: icon }).addTo(markerLayer);
+}
+
+// ─── GPS ──────────────────────────────────────────────────────────
+function useGPS() {
+  if (!navigator.geolocation) {
+    document.getElementById("btn-gps").innerHTML = '<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>No disponible en este navegador</span></div>';
+    return;
+  }
+  document.getElementById("btn-gps").innerHTML = '<div class="loc-btn-icon">⏳</div><div class="loc-btn-info"><strong>Obteniendo ubicación...</strong><span>Por favor esperá</span></div>';
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    selectedLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    var label = pos.coords.latitude.toFixed(5) + ", " + pos.coords.longitude.toFixed(5);
+    document.getElementById("loc-text").textContent = label;
+    document.getElementById("location-display").style.display = "block";
+    document.getElementById("btn-next-3").disabled = false;
+    document.getElementById("btn-gps").classList.add("selected");
+    document.getElementById("btn-gps").innerHTML = '<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Ubicación obtenida ✓</strong><span>' + label + '</span></div>';
+    addTempMarker(pos.coords.latitude, pos.coords.longitude);
+    map.flyTo([pos.coords.latitude, pos.coords.longitude], 16);
+  }, function(err) {
+    var msg = err.code === 1 ? "Permiso denegado. Probá el mapa." : "No se pudo obtener. Probá el mapa.";
+    document.getElementById("btn-gps").innerHTML = '<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>' + msg + '</span></div>';
+  }, { timeout: 10000, enableHighAccuracy: true });
+}
+
+function useMapClick() {
+  mapClickMode = true;
+  document.getElementById("map-hint").style.display = "block";
+  document.getElementById("btn-map").classList.add("selected");
+  document.getElementById("btn-map").innerHTML = '<div class="loc-btn-icon">👆</div><div class="loc-btn-info"><strong>Hacé clic en el mapa</strong><span>Esperando tu selección...</span></div>';
+  if (window.innerWidth <= 700) document.getElementById("map-panel").scrollIntoView({ behavior:"smooth" });
+}
+
+function cancelMapClick() {
+  mapClickMode = false;
+  document.getElementById("map-hint").style.display = "none";
+}
+
+// ─── Categorías UI ────────────────────────────────────────────────
+function buildCatList() {
+  var list = document.getElementById("cat-list");
+  CATS.forEach(function(cat) {
+    var div = document.createElement("div");
+    div.className = "cat-item";
+    div.innerHTML = '<div class="cat-checkbox"><span class="cat-checkbox-tick">✓</span></div><span class="cat-icon">' + cat.icon + '</span><span class="cat-name">' + sanitize(cat.name) + '</span>';
+    div.onclick = function(){ toggleCat(cat, div); };
+    list.appendChild(div);
+  });
+}
+
+function toggleCat(cat, div) {
+  var validCat = CATS.find(function(c){ return c.id === cat.id; });
+  if (!validCat) return;
+  var idx = selectedCats.findIndex(function(c){ return c.id === cat.id; });
+  if (idx === -1) { selectedCats.push({ id: validCat.id, name: validCat.name, icon: validCat.icon }); div.classList.add("selected"); }
+  else { selectedCats.splice(idx, 1); div.classList.remove("selected"); }
+  var count = selectedCats.length;
+  var badge = document.getElementById("selected-count");
+  badge.style.display = count > 0 ? "inline" : "none";
+  if (count > 0) badge.textContent = count + " seleccionado" + (count !== 1 ? "s" : "");
+  var disabled = count === 0;
+  document.getElementById("btn-next-1").disabled = disabled;
+  document.getElementById("btn-next-1-top").disabled = disabled;
+}
+
+// ─── Pasos ────────────────────────────────────────────────────────
+function goToStep(n) {
+  // Arrancar timer al entrar al paso 1 (primer interacción humana)
+  if (n === 1 || n === 2) startFormTimer();
+  document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
+  document.getElementById("sec-" + n).classList.add("active");
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById("step-" + i);
+    el.classList.remove("active","done");
+    if (i < n) el.classList.add("done");
+    else if (i === n) el.classList.add("active");
+  }
+  if (n === 3) {
+    selectedLoc = null;
+    document.getElementById("location-display").style.display = "none";
+    var conf2 = document.getElementById("location-confirmed"); if(conf2) conf2.style.display = "none";
+    document.getElementById("btn-next-3").disabled = true;
+    document.getElementById("btn-gps").className = "loc-btn-big";
+    document.getElementById("btn-gps").innerHTML = '<div class="loc-btn-icon">📍</div><div class="loc-btn-info"><strong>Usar mi ubicación actual</strong><span>Detecta tu posición automáticamente</span></div>';
+    document.getElementById("btn-map").className = "loc-btn-big";
+    document.getElementById("btn-map").innerHTML = '<div class="loc-btn-icon">🗺️</div><div class="loc-btn-info"><strong>Hacer clic en el mapa</strong><span>Marcá el punto exacto en el mapa</span></div>';
+    if (tempMarker) { map.removeLayer(tempMarker); tempMarker = null; }
+    cancelMapClick();
+    setTimeout(function(){ map.invalidateSize(); }, 100);
+  }
+  if (n === 4) {
+    document.getElementById("contact-name").value = "";
+    document.getElementById("contact-info").value = "";
+    document.getElementById("rate-limit-msg").style.display = "none";
+    // Actualizar UI de login
+    updateLoginUI(currentUser);
+  }
+}
+
+// ─── Contador de descripción en tiempo real (descripción opcional) ─
+function checkDesc() {
+  var val = document.getElementById("description").value;
+  var len = val.length;
+  var counter = document.getElementById("desc-counter");
+  counter.textContent = len + " / 500";
+  counter.className = len > 0 ? "desc-counter green" : "desc-counter";
+  // Sin mínimo — siempre habilitado
+  document.getElementById("btn-next-2").disabled = false;
+}
+
+// ─── ✅ Rate limiting: 1 envío por minuto ─────────────────────────
+
+// ─── Marcadores en el mapa ────────────────────────────────────────
+function addReportMarker(id, report) {
+  if (markers[id]) return;
+  var safeCats = Array.isArray(report.cats) ? report.cats : [];
+  var firstIcon = safeCats.length > 0 ? safeCats[0].icon : "⚠️";
+  var isSolved = report.status === "Solucionado";
+  var borderColor = isSolved ? "#16A34A" : "#4A2C8A";
+  var bgColor = isSolved ? "#DCFCE7" : "white";
+  var solvedMark = isSolved ? '<span style="position:absolute;bottom:-3px;right:-3px;background:#16A34A;color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;border:2px solid white">✓</span>' : '';
+  var icon = L.divIcon({
+    html: '<div style="position:relative;background:' + bgColor + ';border:2.5px solid ' + borderColor + ';border-radius:50% 50% 50% 0;width:32px;height:32px;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.25)">' + solvedMark + '<span style="transform:rotate(45deg);font-size:14px">' + sanitize(firstIcon) + '</span></div>',
+    className:"", iconAnchor:[16,32], popupAnchor:[0,-32]
+  });
+  var marker = L.marker([report.lat, report.lng], { icon: icon }).addTo(markerLayer);
+  var time = report.timestamp ? new Date(report.timestamp).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" }) : "";
+  var catsHtml = safeCats.map(function(c){ return '<span class="popup-cat-tag">' + sanitize(c.icon) + ' ' + sanitize(c.name) + '</span>'; }).join("");
+  var statusColor = report.status === "Solucionado" ? "#16A34A" : "#4A2C8A";
+  var statusHtml = '<span style="display:inline-block;margin-top:5px;font-size:11px;font-weight:600;color:' + statusColor + ';">' + (report.status === "Solucionado" ? "✓ Solucionado" : "⏳ Pendiente") + '</span>';
+  var adminHtml = isAdmin ? (
+    '<div style="margin-top:8px;display:flex;gap:6px;">' +
+    '<button onclick="solveReport(event,\'' + id + '\')" ' + (report.status === "Solucionado" ? 'disabled style="opacity:0.5;"' : '') + ' style="flex:1;background:#4A2C8A;color:white;border:none;border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer;">✓ Solucionado</button>' +
+    '<button onclick="deleteReport(event,\'' + id + '\')" style="flex:1;background:#C0392B;color:white;border:none;border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer;">🗑️ Eliminar</button>' +
+    '</div>'
+  ) : '';
+  marker.bindPopup('<div class="popup-content"><div class="popup-cats">' + catsHtml + '</div><div class="pc-desc">' + sanitize(report.description) + '</div><div class="pc-time">' + time + '</div>' + statusHtml + adminHtml + '</div>');
+  marker.on("click", function() {
+    switchTab("list");
+    setTimeout(function(){ var card = document.getElementById("rc-"+id); if(card) card.scrollIntoView({behavior:"smooth",block:"center"}); }, 200);
+  });
+  markers[id] = marker;
+}
+
+function rebuildAllMarkers() {
+  Object.keys(markers).forEach(function(id) {
+    map.removeLayer(markers[id]);
+    delete markers[id];
+  });
+  Object.entries(allReports).forEach(function(entry) {
+    addReportMarker(entry[0], entry[1]);
+  });
+}
+
+function removeReportMarker(id) {
+  if (markers[id]) { map.removeLayer(markers[id]); delete markers[id]; }
+}
+
+// ─── Escuchar Firestore en tiempo real ───────────────────────────
+function startListening() {
+  db.collection("reports").orderBy("timestamp", "desc").onSnapshot(function(snapshot) {
+    snapshot.docChanges().forEach(function(change) {
+      var id = change.doc.id;
+      var data = change.doc.data();
+      if (change.type === "added") {
+        allReports[id] = data;
+        addReportMarker(id, data);
+      } else if (change.type === "modified") {
+        allReports[id] = data;
+        removeReportMarker(id);
+        addReportMarker(id, data);
+      } else if (change.type === "removed") {
+        delete allReports[id];
+        removeReportMarker(id);
+      }
+    });
+    renderReportsList();
+    updateBadge();
+    document.getElementById("loading-overlay").style.display = "none";
+  }, function(err) {
+    console.error("Firestore error:", err);
+    document.getElementById("loading-overlay").style.display = "none";
+  });
+  setTimeout(function(){ document.getElementById("loading-overlay").style.display = "none"; }, 4000);
+}
+
+// ─── Lista de reclamos ───────────────────────────────────────────
+function renderReportsList() {
+  var container = document.getElementById("reports-list");
+  var sorted = Object.entries(allReports).sort(function(a,b){
+    return new Date(b[1].timestamp) - new Date(a[1].timestamp);
+  });
+  if (!sorted.length) {
+    container.innerHTML = '<div class="no-reports"><div class="nr-icon">📍</div><p>No hay reclamos todavía.<br>¡Sé el primero en reportar!</p></div>';
+    return;
+  }
+  container.innerHTML = sorted.map(function(entry) {
+    var id = entry[0]; var r = entry[1];
+    var safeCats = Array.isArray(r.cats) ? r.cats : [];
+    var time = r.timestamp ? new Date(r.timestamp).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" }) : "";
+    var catsHtml = safeCats.map(function(c){ return '<span class="rc-cat-tag">' + sanitize(c.icon) + ' ' + sanitize(c.name) + '</span>'; }).join("");
+    var isSolved = r.status === "Solucionado";
+    var lat = r.lat || 0; var lng = r.lng || 0;
+    var userHtml = isAdmin && (r.userName || r.userEmail) ?
+      '<div style="font-size:11px;color:var(--accent2);margin-bottom:4px;">👤 ' + sanitize(r.userName || r.userEmail) + '</div>' : '';
+    return '<div class="report-card" id="rc-' + id + '" onclick="focusReport(' + lat + ',' + lng + ')">' +
+      '<div class="rc-top"><div class="rc-cats">' + catsHtml + '</div><span class="rc-time">' + time + '</span></div>' +
+      userHtml +
+      '<div class="rc-desc">' + sanitize(r.description) + '</div>' +
+      '<div class="rc-loc">' +
+        '<span>📍 ' + lat.toFixed(4) + ', ' + lng.toFixed(4) + '<span class="status-badge">' + sanitize(r.status) + '</span></span>' +
+        '<button class="btn-solve" onclick="solveReport(event,\'' + id + '\')" ' + (isSolved ? 'disabled' : '') + '>' + (isSolved ? '✓ Solucionado' : 'Marcar solucionado') + '</button>' +
+        '<button class="btn-delete" onclick="deleteReport(event,\'' + id + '\')">🗑️ Eliminar</button>' +
+      '</div></div>';
+  }).join("");
+}
+
+function focusReport(lat, lng) {
+  map.flyTo([lat, lng], 17, { duration: 1 });
+}
+
+function updateBadge() {
+  var n = Object.keys(allReports).length;
+  document.getElementById("total-badge").textContent = n + " reporte" + (n !== 1 ? "s" : "");
+}
+
+// Admin email
+var adminEmail = "julianganon@hotmail.com";
+
+// ─── ✅ Google Sign-In ────────────────────────────────────────────
+var currentUser = null;
+
+function showFormForUser(user) {
+  document.getElementById("login-gate").style.display = "none";
+  document.getElementById("form-body").style.display = "block";
+  var nameEl = document.getElementById("user-display-name");
+  if (nameEl) nameEl.textContent = (user.displayName || user.email);
+}
+
+function showLoginGate() {
+  document.getElementById("login-gate").style.display = "block";
+  document.getElementById("form-body").style.display = "none";
+}
+
+function resetForm() {
+  selectedCats = []; selectedLoc = null;
+  document.getElementById("description").value = "";
+  document.getElementById("contact-name").value = "";
+  document.getElementById("contact-info").value = "";
+  document.getElementById("selected-count").style.display = "none";
+  document.getElementById("btn-next-1").disabled = true;
+  document.getElementById("btn-next-1-top").disabled = true;
+  document.querySelectorAll(".cat-item").forEach(function(el){ el.classList.remove("selected"); });
+  document.getElementById("success-msg").style.display = "none";
+  document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
+  document.getElementById("sec-1").classList.add("active");
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById("step-" + i);
+    el.classList.remove("active","done");
+    if (i === 1) el.classList.add("active");
+  }
+  startFormTimer();
+}
+
+// ─── ✅ Google Sign-In ────────────────────────────────────────────
+var currentUser = null;
+
+// Al volver de un redirect en móvil, restaurar formulario
+auth.getRedirectResult()
+  .then(function(result) {
+    if (result && result.user) {
+      localStorage.removeItem('_formState');
+    }
+  })
+  .catch(function(err) {
+    if (err && err.code) console.error('Auth redirect error:', err.code, err.message);
+  });
+
+function signInWithGoogle() {
+  var btn = document.querySelector("#login-gate .btn-google");
+  var provider = new firebase.auth.GoogleAuthProvider();
+
+  if (btn) { btn.disabled = true; btn.textContent = "Conectando con Google..."; }
+
+  auth.signInWithPopup(provider)
+    .then(function(result) {
+      // Actualizar UI del paso 4 directamente sin esperar onAuthStateChanged
+      if (result && result.user) {
+        updateLoginUI(result.user);
+      }
+    })
+    .catch(function(err) {
+      console.error('Login error:', err.code, err.message);
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"/> Continuar con Google';
+      }
+      if (err.code === 'auth/popup-blocked') {
+        // Único caso donde usamos redirect como fallback
+        auth.signInWithRedirect(provider);
+      } else if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+        alert('Error al iniciar sesión (' + (err.code || 'desconocido') + '). Intentá de nuevo.');
+      }
+    });
+}
+
+function signOutGoogle() {
+  auth.signOut();
+}
+
+function goToFormStart() {
+  switchTab('form');
+  // Volver al paso 1 sin recargar
+  document.getElementById("success-msg").style.display = "none";
+  document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
+  document.getElementById("sec-1").classList.add("active");
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById("step-" + i);
+    el.classList.remove("active","done");
+    if (i === 1) el.classList.add("active");
+  }
+}
+
+auth.onAuthStateChanged(function(user) {
+  currentUser = user;
+  isAdmin = !!user && (user.email === adminEmail);
+
+  document.getElementById("admin-banner").classList.toggle("visible", isAdmin);
+  document.getElementById("sidebar").classList.toggle("admin-mode", isAdmin);
+  renderReportsList();
+  rebuildAllMarkers();
+
+  // Mostrar/ocultar "Cerrar sesión" en header
+  var logoutBtn = document.getElementById("header-logout");
+  if (logoutBtn) logoutBtn.style.display = user ? "block" : "none";
+
+  // Actualizar UI del paso 4 si está visible
+  var sec4 = document.getElementById("sec-4");
+  if (sec4 && sec4.classList.contains("active")) {
+    updateLoginUI(user);
+  }
+});
+
+// ─── Detectar móvil ──────────────────────────────────────────────
+function isMobile() {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
+function updateLoginUI(user) {
+  var loggedOut = document.getElementById("user-logged-out");
+  var loggedIn = document.getElementById("user-logged-in");
+  var btnSubmit = document.getElementById("btn-submit");
+  var nameEl = document.getElementById("user-display-name");
+  if (user) {
+    if (loggedOut) loggedOut.style.display = "none";
+    if (loggedIn) loggedIn.style.display = "block";
+    if (btnSubmit) btnSubmit.disabled = false;
+    if (nameEl) nameEl.textContent = (user.displayName || user.email);
+  } else {
+    if (loggedOut) loggedOut.style.display = "block";
+    if (loggedIn) loggedIn.style.display = "none";
+    if (btnSubmit) btnSubmit.disabled = true;
+  }
+}
+
+// ─── Admin ───────────────────────────────────────────────────────
+function solveReport(e, id) {
+  e.stopPropagation();
+  if (!isAdmin) return;
+  if (confirm("¿Marcás este reclamo como solucionado?")) {
+    db.collection("reports").doc(id).update({ status: "Solucionado" });
+  }
+}
+function deleteReport(e, id) {
+  e.stopPropagation();
+  if (!isAdmin) return;
+  if (confirm("¿Eliminás definitivamente este reclamo?")) {
+    db.collection("reports").doc(id).delete();
+  }
+}
+function openAdminModal() {
+  document.getElementById("admin-modal").classList.add("visible");
+  setTimeout(function(){ document.getElementById("admin-email").focus(); }, 100);
+}
+function closeAdminModal() {
+  document.getElementById("admin-modal").classList.remove("visible");
+  document.getElementById("login-error").style.display = "none";
+  document.getElementById("admin-password").value = "";
+}
+function doAdminLogin() {
+  var email = document.getElementById("admin-email").value.trim();
+  var pass = document.getElementById("admin-password").value;
+  document.getElementById("login-error").style.display = "none";
+  auth.signInWithEmailAndPassword(email, pass)
+    .then(function(){ closeAdminModal(); })
+    .catch(function(){ document.getElementById("login-error").style.display = "block"; });
+}
+function adminLogout() { auth.signOut(); }
+
+// ─── Tabs ────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll(".tab").forEach(function(t,i){
+    t.classList.toggle("active", (i===0&&tab==="form")||(i===1&&tab==="list"));
+  });
+  document.getElementById("panel-form").classList.toggle("active", tab==="form");
+  document.getElementById("panel-list").classList.toggle("active", tab==="list");
+  if (tab === "list") renderReportsList();
+}
+
+// ─── Compartir ───────────────────────────────────────────────────
+function compartirApp() {
+  if (navigator.share) {
+    navigator.share({ title:'Magdalena Reporta', text:'📍 Reportá problemas en tu municipio.', url:'https://epa-magdalena-reporta.vercel.app/' });
+  } else {
+    navigator.clipboard.writeText('https://epa-magdalena-reporta.vercel.app/');
+    alert('¡Link copiado! Compartilo con tus vecinos.');
+  }
+}
+
+// ─── ✅ Desconexión por inactividad (reduce conexiones Firebase) ──
+var _disconnectTimer = null;
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    _disconnectTimer = setTimeout(function() {
+      if (document.hidden) { /* Firestore detiene listeners automáticamente */ }
+    }, 30000);
+  } else {
+    if (_disconnectTimer) { clearTimeout(_disconnectTimer); _disconnectTimer = null; }
+  }
+});
+
+// ─── Init ────────────────────────────────────────────────────────
+buildCatList();
+initMap();
+startFormTimer();
+startListening();
+</script>
+</body>
+</html>
