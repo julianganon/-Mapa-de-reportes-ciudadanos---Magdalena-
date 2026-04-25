@@ -24,6 +24,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-check-compat.js"></script>
+<script src="https://www.google.com/recaptcha/api.js?render=6LcjjcgsAAAAKU1MEcWlVB4CH95aozcjKAJ0zSM"></script>
 
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -157,8 +158,13 @@ footer { text-align: center; padding: 8px; }
 }
 /* Honeypot: absolutamente invisible */
 .hp-field { position: absolute; left: -9999px; top: -9999px; opacity: 0; height: 0; width: 0; overflow: hidden; pointer-events: none; }
-/* Rate limit warning */
-#rate-limit-msg { display: none; background: #FFF3CD; border: 1px solid #FFEAA7; color: #856404; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 10px; text-align: center; }
+/* Google Sign-In */
+#google-signin-section { text-align: center; padding: 10px 0; }
+.btn-google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 12px 20px; background: white; border: 1.5px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; transition: all 0.15s; margin-top: 12px; }
+.btn-google:hover { background: var(--surface2); border-color: var(--accent2); }
+.btn-google img { width: 20px; height: 20px; }
+#user-info { display: none; background: var(--accent-light); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.privacy-note { font-size: 12px; color: var(--text3); line-height: 1.6; text-align: center; margin-bottom: 4px; background: var(--surface2); padding: 10px 14px; border-radius: var(--radius-sm); }
 </style>
 
 </head>
@@ -244,23 +250,40 @@ footer { text-align: center; padding: 8px; }
       </div>
 
       <div class="form-section" id="sec-4">
-        <label class="field-label">Dejanos tu contacto <span style="font-size:11px;color:var(--text3);font-weight:400;">(opcional)</span></label>
-        <p class="field-hint">Si querés que nos comuniquemos con vos sobre este reclamo, dejanos tu nombre y un medio de contacto.</p>
-        <input type="text" id="contact-name" placeholder="Tu nombre (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
-        <input type="text" id="contact-info" placeholder="WhatsApp, email o teléfono (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
-        <!-- ✅ ANTI-BOT: Checkbox humano obligatorio -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:12px 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;" onclick="toggleHumanCheck()" id="human-check-box">
-          <div id="human-checkbox" style="width:20px;height:20px;border-radius:4px;border:1.5px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;background:white;transition:all 0.15s;"></div>
-          <span style="font-size:13px;color:var(--text);user-select:none;">Confirmo que soy un vecino real de Magdalena</span>
+        <!-- ✅ ANTI-BOT: Login con Google obligatorio -->
+        <div id="google-signin-section">
+          <label class="field-label" style="text-align:center;display:block;">Verificá tu identidad</label>
+          <p class="privacy-note">🔒 Tu cuenta de Google se usa solo para verificar que sos una persona real. Tu nombre y email <strong>no serán publicados ni compartidos</strong>.</p>
+          <div id="user-logged-out">
+            <button class="btn-google" onclick="signInWithGoogle()">
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"/>
+              Continuar con Google
+            </button>
+          </div>
+          <div id="user-logged-in" style="display:none;">
+            <div style="background:var(--accent-light);border:1px solid var(--accent-border);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;color:var(--accent);margin-top:12px;display:flex;align-items:center;gap:8px;">
+              <span>✅</span><span id="user-display-name">Verificado</span>
+              <button onclick="signOutGoogle()" style="margin-left:auto;background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;text-decoration:underline;">Cambiar cuenta</button>
+            </div>
+          </div>
         </div>
-        <!-- ✅ Honeypot: invisible para humanos, bots lo llenan -->
+
+        <!-- Contacto opcional — solo se muestra después del login -->
+        <div id="contact-section" style="display:none;margin-top:16px;">
+          <label class="field-label">Contacto <span style="font-size:11px;color:var(--text3);font-weight:400;">(opcional)</span></label>
+          <p class="field-hint">Si querés que nos comuniquemos con vos, dejanos un medio de contacto.</p>
+          <input type="text" id="contact-name" placeholder="Tu nombre (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
+          <input type="text" id="contact-info" placeholder="WhatsApp, email o teléfono (opcional)" maxlength="100" style="width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);outline:none;margin-bottom:10px;-webkit-appearance:none;"/>
+        </div>
+
+        <!-- Honeypot -->
         <div class="hp-field" aria-hidden="true" tabindex="-1">
           <input type="text" name="website" id="hp-website" tabindex="-1" autocomplete="off" aria-hidden="true"/>
         </div>
-        <div id="rate-limit-msg">⏳ Por favor esperá un momento antes de enviar otro reclamo.</div>
+        <div id="rate-limit-msg" style="display:none;background:#FFF3CD;border:1px solid #FFEAA7;color:#856404;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:10px;text-align:center;">⏳ Por favor esperá un momento antes de enviar otro reclamo.</div>
         <div class="btn-row">
           <button class="btn btn-secondary" onclick="goToStep(3)">← Volver</button>
-          <button class="btn btn-primary" id="btn-submit" onclick="submitReport()">Enviar reclamo ✓</button>
+          <button class="btn btn-primary" id="btn-submit" onclick="submitReport()" disabled>Enviar reclamo ✓</button>
         </div>
       </div>
 
@@ -320,6 +343,11 @@ const firebaseConfig = {
   appId: "1:199471654104:web:180223706d7015d25963ad"
 };
 firebase.initializeApp(firebaseConfig);
+
+// ✅ App Check — inicializar con nueva clave reCAPTCHA v3
+const appCheck = firebase.appCheck();
+appCheck.activate('6LcjjcgsAAAAKU1MEcWlVB4CH95aozcjKAJ0zSM', true);
+
 const db = firebase.firestore();
 const auth = firebase.auth();
 
@@ -348,33 +376,28 @@ const ATTACK_PATTERNS = [
   'alert(','confirm(','prompt('
 ];
 
-// ─── ✅ ANTI-BOT A: Timer — registrar cuando arranca el formulario ─
+// ✅ reCAPTCHA v3 — pre-cargar token mientras el vecino completa el formulario
+var rcToken = null;
+function preloadRcToken() {
+  try {
+    if (typeof grecaptcha !== 'undefined') {
+      grecaptcha.ready(function() {
+        grecaptcha.execute('6LcjjcgsAAAAKU1MEcWlVB4CH95aozcjKAJ0zSM', {action: 'submit'})
+          .then(function(t) { rcToken = t; })
+          .catch(function() { rcToken = null; });
+      });
+    }
+  } catch(e) { rcToken = null; }
+}
+// Pre-cargar al arrancar — tiene todo el tiempo del formulario para estar listo
+setTimeout(preloadRcToken, 1000);
+// Renovar cada 90 segundos (los tokens expiran)
+setInterval(preloadRcToken, 90000);
 var _formStartTime = null;
-var _humanChecked = false;
 var MIN_FORM_SECONDS = 8; // humano tarda al menos 8 segundos
 
 function startFormTimer() {
   if (!_formStartTime) _formStartTime = Date.now();
-}
-
-// ─── ✅ ANTI-BOT C: Checkbox humano ──────────────────────────────
-function toggleHumanCheck() {
-  _humanChecked = !_humanChecked;
-  var box = document.getElementById("human-check-box");
-  var cb = document.getElementById("human-checkbox");
-  if (_humanChecked) {
-    cb.style.background = "var(--accent)";
-    cb.style.borderColor = "var(--accent)";
-    cb.innerHTML = '<span style="color:white;font-size:13px;font-weight:700;">✓</span>';
-    box.style.borderColor = "var(--accent)";
-    box.style.background = "var(--accent-light)";
-  } else {
-    cb.style.background = "white";
-    cb.style.borderColor = "var(--border)";
-    cb.innerHTML = "";
-    box.style.borderColor = "var(--border)";
-    box.style.background = "var(--surface)";
-  }
 }
 
 // ─── ✅ Enviar reclamo con todas las capas de seguridad ──────────
@@ -387,14 +410,9 @@ function submitReport() {
     return;
   }
 
-  // CAPA 2: Checkbox humano
-  if (!_humanChecked) {
-    document.getElementById("human-check-box").style.borderColor = "#C0392B";
-    document.getElementById("human-check-box").style.background = "#FCEAEA";
-    setTimeout(function() {
-      document.getElementById("human-check-box").style.borderColor = "var(--border)";
-      document.getElementById("human-check-box").style.background = "var(--surface)";
-    }, 2000);
+  // CAPA 2: Google login obligatorio
+  if (!currentUser) {
+    alert("Por favor iniciá sesión con Google para enviar el reclamo.");
     return;
   }
 
@@ -457,11 +475,32 @@ function submitReport() {
     timestamp: new Date().toISOString(),
     status: "Pendiente",
     contactName: contactName || null,
-    contactInfo: contactInfo || null
+    contactInfo: contactInfo || null,
+    rcToken: rcToken || null,
+    userUid: currentUser ? currentUser.uid : null
   };
 
-  db.collection("reports").add(report).then(function() {
+  db.collection("reports").add(report).then(function(docRef) {
     markSubmitted();
+
+    // ✅ Respaldo automático a Google Sheets
+    var sheetsData = {
+      timestamp: report.timestamp,
+      cats: report.cats,
+      description: report.description,
+      lat: report.lat,
+      lng: report.lng,
+      status: report.status,
+      contactName: report.contactName,
+      contactInfo: report.contactInfo
+    };
+    fetch("https://script.google.com/macros/s/AKfycbwAa2Fmbg5Az6biLb-FGFlFQkXoBTnUnTk3R-j4kTdkwHrffro3yboXETHg2sEbv-5q/exec", {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sheetsData)
+    }).catch(function(){});  // fallo silencioso — Firestore ya guardó
+
     if (tempMarker) { map.removeLayer(tempMarker); tempMarker = null; }
     map.flyTo([report.lat, report.lng], 16, { duration: 1 });
     document.querySelectorAll(".form-section").forEach(function(s){ s.classList.remove("active"); });
@@ -639,12 +678,8 @@ function goToStep(n) {
     document.getElementById("contact-name").value = "";
     document.getElementById("contact-info").value = "";
     document.getElementById("rate-limit-msg").style.display = "none";
-    // Reset checkbox
-    _humanChecked = false;
-    var cb = document.getElementById("human-checkbox");
-    if (cb) { cb.style.background="white"; cb.style.borderColor="var(--border)"; cb.innerHTML=""; }
-    var box = document.getElementById("human-check-box");
-    if (box) { box.style.borderColor="var(--border)"; box.style.background="var(--surface)"; }
+    // Actualizar UI de login
+    updateLoginUI(currentUser);
   }
 }
 
@@ -751,8 +786,61 @@ function updateBadge() {
   document.getElementById("total-badge").textContent = n + " reporte" + (n !== 1 ? "s" : "");
 }
 
-// ─── Admin ───────────────────────────────────────────────────────
-function solveReport(e, id) {
+// ─── ✅ Google Sign-In ────────────────────────────────────────────
+var currentUser = null;
+
+function signInWithGoogle() {
+  var provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(function(err) {
+    console.error('Login error:', err);
+    alert('Error al iniciar sesión. Por favor intentá de nuevo.');
+  });
+}
+
+function signOutGoogle() {
+  auth.signOut();
+}
+
+auth.onAuthStateChanged(function(user) {
+  currentUser = user;
+  isAdmin = !!user && (user.email === adminEmail);
+
+  // Actualizar UI de admin
+  document.getElementById("admin-banner").classList.toggle("visible", isAdmin);
+  document.getElementById("sidebar").classList.toggle("admin-mode", isAdmin);
+  renderReportsList();
+
+  // Actualizar UI del paso 4 si está visible
+  var sec4 = document.getElementById("sec-4");
+  if (sec4 && sec4.classList.contains("active")) {
+    updateLoginUI(user);
+  }
+});
+
+function updateLoginUI(user) {
+  var loggedOut = document.getElementById("user-logged-out");
+  var loggedIn = document.getElementById("user-logged-in");
+  var contactSection = document.getElementById("contact-section");
+  var btnSubmit = document.getElementById("btn-submit");
+  var nameEl = document.getElementById("user-display-name");
+
+  if (user) {
+    if (loggedOut) loggedOut.style.display = "none";
+    if (loggedIn) loggedIn.style.display = "block";
+    if (contactSection) contactSection.style.display = "block";
+    if (btnSubmit) btnSubmit.disabled = false;
+    if (nameEl) nameEl.textContent = "✅ Verificado como " + (user.displayName || user.email);
+  } else {
+    if (loggedOut) loggedOut.style.display = "block";
+    if (loggedIn) loggedIn.style.display = "none";
+    if (contactSection) contactSection.style.display = "none";
+    if (btnSubmit) btnSubmit.disabled = true;
+    if (nameEl) nameEl.textContent = "Verificado";
+  }
+}
+
+// Admin email — cambiá esto por el email del admin real
+var adminEmail = "julianganon@hotmail.com";
   e.stopPropagation();
   if (!isAdmin) return;
   if (confirm("¿Marcás este reclamo como solucionado?")) {
@@ -827,8 +915,12 @@ document.addEventListener('visibilitychange', function() {
 // ─── Init ────────────────────────────────────────────────────────
 buildCatList();
 initMap();
-startListening();
-startFormTimer(); // arrancar timer desde que carga la página
+startFormTimer();
+
+// ✅ Esperar token App Check antes de leer Firestore
+firebase.appCheck().getToken()
+  .then(function() { startListening(); })
+  .catch(function() { startListening(); });
 </script>
 </body>
 </html>
