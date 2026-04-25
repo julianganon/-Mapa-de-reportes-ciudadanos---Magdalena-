@@ -15,9 +15,8 @@ if (!getApps().length) {
 const db = getFirestore();
 const auth = getAuth();
 
-// Rate limiting en memoria (se resetea si la función se reinicia)
 const rateLimitMap = new Map();
-const RATE_LIMIT_MS = 60000; // 1 minuto
+const RATE_LIMIT_MS = 60000;
 
 const VALID_CAT_IDS = [
   'obra','calle','luminaria','basura','cloaca',
@@ -27,13 +26,17 @@ const VALID_CAT_IDS = [
 function sanitize(str) {
   if (!str) return '';
   return String(str)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#039;')
-    .replace(/\\/g, '&#092;').trim();
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+    .replace(/\\/g, '&#092;')
+    .trim();
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', 'https://magdalena-reporta.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
@@ -41,11 +44,11 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    // 1 — Verificar token de Google
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'No autorizado' });
     }
+
     const idToken = authHeader.split('Bearer ')[1];
     let decodedToken;
     try {
@@ -58,14 +61,17 @@ export default async function handler(req, res) {
     const userEmail = decodedToken.email || '';
     const userName = decodedToken.name || '';
 
-    // 2 — Rate limiting por usuario
+    // Registro de IP
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'IP_DESCONOCIDA';
+    console.log(`[SEGURIDAD] Reporte entrante - IP: ${clientIp} | Email: ${userEmail} | UID: ${uid}`);
+
+    // Rate limiting
     const now = Date.now();
     const lastSubmit = rateLimitMap.get(uid) || 0;
     if (now - lastSubmit < RATE_LIMIT_MS) {
       return res.status(429).json({ error: 'Esperá un momento antes de enviar otro reclamo' });
     }
 
-    // 3 — Validar datos
     const { cats, description, lat, lng } = req.body;
 
     if (typeof lat !== 'number' || typeof lng !== 'number') {
@@ -78,7 +84,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Seleccioná al menos una categoría' });
     }
 
-    // 4 — Validar categorías contra lista oficial
     const safeCats = cats
       .filter(c => VALID_CAT_IDS.includes(c.id))
       .map(c => ({
@@ -91,12 +96,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Categorías inválidas' });
     }
 
-    // 5 — Sanitizar campos opcionales
     const contactName = sanitize(req.body.contactName || '').substring(0, 100);
     const contactInfo = sanitize(req.body.contactInfo || '').substring(0, 100);
     const safeDesc = sanitize(description).substring(0, 300);
 
-    // 6 — Guardar en Firestore
     const report = {
       cats: safeCats,
       description: safeDesc,
@@ -112,14 +115,11 @@ export default async function handler(req, res) {
     };
 
     const docRef = await db.collection('reports').add(report);
-
-    // 7 — Marcar rate limit
     rateLimitMap.set(uid, now);
 
-    // 8 — Respaldo a Google Sheets (silencioso)
     const sheetsUrl = process.env.SHEETS_WEBHOOK_URL;
     if (sheetsUrl) {
-      const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
+      const mapsUrl = `https://www.google.com/maps?q=${lat},${lng}`;
       fetch(sheetsUrl, {
         method: 'POST',
         mode: 'no-cors',
