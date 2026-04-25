@@ -58,6 +58,10 @@ export default async function handler(req, res) {
     const userEmail = decodedToken.email || '';
     const userName = decodedToken.name || '';
 
+    // Capturar y logear IP
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'IP_DESCONOCIDA';
+    console.log(`Nuevo reporte — IP: ${clientIp} | Usuario: ${userEmail} | UID: ${uid}`);
+
     // 2 — Rate limiting por usuario
     const now = Date.now();
     const lastSubmit = rateLimitMap.get(uid) || 0;
