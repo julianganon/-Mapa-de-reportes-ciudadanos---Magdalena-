@@ -34,11 +34,10 @@ const ATTACK_PATTERNS = [
   'alert(','confirm(','prompt('
 ];
 
-// ── Parámetros del sistema de bloqueo automático ─────────────────
-const VENTANA_MS = 10 * 60 * 1000; // 10 minutos
-const NIVEL_1 = 3;  // alerta silenciosa
-const NIVEL_2 = 5;  // demora de 3 segundos (invisible para el atacante)
-const NIVEL_3 = 8;  // bloqueo automático del UID
+const VENTANA_MS = 10 * 60 * 1000;
+const NIVEL_1 = 3;
+const NIVEL_2 = 5;
+const NIVEL_3 = 8;
 
 function containsAttackPattern(str) {
   if (!str) return false;
@@ -64,7 +63,15 @@ function delay(ms) {
 }
 
 // ── Registrar evento sospechoso ──────────────────────────────────
-async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent, endpoint, nivel }) {
+// Incluye todos los campos necesarios para una denuncia formal.
+async function registrarSospechoso({
+  evento, detalle,
+  ip, uid, email, userAgent, userName,
+  endpoint, nivel,
+  // campos de evidencia del reporte:
+  mensaje, cats, lat, lng,
+  reportId,
+}) {
   try {
     const ahora = new Date();
     const fechaAR = ahora.toLocaleString('es-AR', {
@@ -72,20 +79,40 @@ async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent,
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
+
     await db.collection('suspicious').add({
-      evento,
-      detalle: detalle || '',
-      ip: ip || 'DESCONOCIDA',
+      // ── Identificación del actor ───────────────────────────────
       uid: uid || 'NO_AUTENTICADO',
       email: email || '',
+      userName: userName || '',
+
+      // ── Origen de la solicitud ─────────────────────────────────
+      ip: ip || 'DESCONOCIDA',
       userAgent: userAgent || '',
       endpoint: endpoint || '/api/submit',
+
+      // ── Tipo de evento ─────────────────────────────────────────
+      evento,
+      detalle: detalle || '',
+      nivel: nivel || 0,
+
+      // ── Contenido enviado (evidencia del mensaje) ──────────────
+      mensaje: mensaje || '',           // texto completo del campo descripción
+      cats: cats || [],                 // categorías seleccionadas
+      lat: lat ?? null,                 // coordenadas enviadas
+      lng: lng ?? null,
+
+      // ── Referencia cruzada con /reports ───────────────────────
+      reportId: reportId || null,       // ID del doc si llegó a guardarse
+
+      // ── Timestamps ────────────────────────────────────────────
       fecha: ahora.toISOString(),
       fechaAR,
-      nivel: nivel || 0,
+      timestamp: FieldValue.serverTimestamp(),
+
+      // ── Flags de revisión ─────────────────────────────────────
       bloqueado: true,
       revisado: false,
-      timestamp: FieldValue.serverTimestamp(),
     });
   } catch (e) {
     console.error('[SUSPICIOUS] Error al registrar:', e);
@@ -93,10 +120,6 @@ async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent,
 }
 
 // ── Sistema de bloqueo progresivo ────────────────────────────────
-// Cuenta eventos sospechosos del UID en los últimos 10 minutos.
-// Nivel 1 (3): registra silenciosamente
-// Nivel 2 (5): agrega demora de 3 segundos
-// Nivel 3 (8): bloquea el UID automáticamente en Firestore
 async function evaluarNivelThreat(uid, ip) {
   try {
     const ventanaInicio = new Date(Date.now() - VENTANA_MS);
@@ -108,8 +131,6 @@ async function evaluarNivelThreat(uid, ip) {
     const count = snapshot.size;
 
     if (count >= NIVEL_3) {
-      // Bloqueo automático — guardar en colección blocked_uids
-      // Desde ahí podés desbloquearlo manualmente si es un vecino
       await db.collection('blocked_uids').doc(uid).set({
         uid,
         ip,
@@ -131,9 +152,7 @@ async function evaluarNivelThreat(uid, ip) {
   }
 }
 
-// ── Verificar si UID está bloqueado en Firestore ─────────────────
-// Primero chequea la variable de entorno, luego la colección.
-// Podés desbloquear desde Firebase sin tocar el código.
+// ── Verificar si UID está bloqueado ─────────────────────────────
 async function isBlocked(uid) {
   const envBlocked = (process.env.BLOCKED_UIDS || '').split(',').filter(Boolean);
   if (envBlocked.includes(uid)) return true;
@@ -162,7 +181,11 @@ export default async function handler(req, res) {
     // ── 1. Verificar token Firebase ──────────────────────────────
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      await registrarSospechoso({ evento: 'TOKEN_INVALIDO', detalle: 'Request sin Authorization', ip: clientIp, userAgent });
+      await registrarSospechoso({
+        evento: 'TOKEN_INVALIDO',
+        detalle: 'Request sin Authorization',
+        ip: clientIp, userAgent,
+      });
       return res.status(401).json({ error: 'No autorizado' });
     }
 
@@ -171,7 +194,11 @@ export default async function handler(req, res) {
     try {
       decodedToken = await auth.verifyIdToken(idToken);
     } catch {
-      await registrarSospechoso({ evento: 'TOKEN_INVALIDO', detalle: 'Token inválido o expirado', ip: clientIp, userAgent });
+      await registrarSospechoso({
+        evento: 'TOKEN_INVALIDO',
+        detalle: 'Token inválido o expirado',
+        ip: clientIp, userAgent,
+      });
       return res.status(401).json({ error: 'Token inválido' });
     }
 
@@ -179,14 +206,24 @@ export default async function handler(req, res) {
     const userEmail = decodedToken.email || '';
     const userName = decodedToken.name || '';
 
+    // Extraer campos del body para tenerlos disponibles en todos los registros
+    const { cats, description, lat, lng } = req.body;
+
     console.log(`[SUBMIT] IP: ${clientIp} | UID: ${uid}`);
 
-    // ── 2. Verificar bloqueo (env + Firestore) ───────────────────
+    // ── 2. Verificar bloqueo ─────────────────────────────────────
     const bloqueado = await isBlocked(uid);
     if (bloqueado) {
       console.log(`[BLOQUEADO] UID: ${uid} | IP: ${clientIp}`);
-      await registrarSospechoso({ evento: 'UID_BLOQUEADO', detalle: 'UID bloqueado intentó enviar', ip: clientIp, uid, email: userEmail, userAgent });
-      // Respuesta silenciosa — el atacante cree que funcionó
+      await registrarSospechoso({
+        evento: 'UID_BLOQUEADO',
+        detalle: 'UID bloqueado intentó enviar',
+        ip: clientIp, uid, email: userEmail, userAgent, userName,
+        mensaje: typeof description === 'string' ? description : '',
+        cats: Array.isArray(cats) ? cats : [],
+        lat: typeof lat === 'number' ? lat : null,
+        lng: typeof lng === 'number' ? lng : null,
+      });
       return res.status(200).json({ ok: true, id: 'blocked' });
     }
 
@@ -197,28 +234,48 @@ export default async function handler(req, res) {
     if (rateLimitDoc.exists) {
       const lastSubmit = rateLimitDoc.data().lastSubmit?.toMillis() || 0;
       if (Date.now() - lastSubmit < RATE_LIMIT_MS) {
-        await registrarSospechoso({ evento: 'RATE_LIMIT', detalle: 'Envíos en ráfaga', ip: clientIp, uid, email: userEmail, userAgent });
+        await registrarSospechoso({
+          evento: 'RATE_LIMIT',
+          detalle: 'Envíos en ráfaga',
+          ip: clientIp, uid, email: userEmail, userAgent, userName,
+          mensaje: typeof description === 'string' ? description : '',
+          cats: Array.isArray(cats) ? cats : [],
+          lat: typeof lat === 'number' ? lat : null,
+          lng: typeof lng === 'number' ? lng : null,
+        });
 
-        // Evaluar nivel de amenaza después de registrar
         const nivel = await evaluarNivelThreat(uid, clientIp);
-        if (nivel >= 2) await delay(3000); // demora invisible
+        if (nivel >= 2) await delay(3000);
 
         return res.status(429).json({ error: 'Esperá un momento antes de enviar otro reclamo' });
       }
     }
 
     // ── 4. Validar campos ────────────────────────────────────────
-    const { cats, description, lat, lng } = req.body;
-
     if (typeof lat !== 'number' || typeof lng !== 'number') {
-      await registrarSospechoso({ evento: 'GEO_INVALIDO', detalle: `Coords no numéricas: lat=${lat} lng=${lng}`, ip: clientIp, uid, email: userEmail, userAgent });
+      await registrarSospechoso({
+        evento: 'GEO_INVALIDO',
+        detalle: `Coords no numéricas: lat=${lat} lng=${lng}`,
+        ip: clientIp, uid, email: userEmail, userAgent, userName,
+        mensaje: typeof description === 'string' ? description : '',
+        cats: Array.isArray(cats) ? cats : [],
+        lat: lat ?? null,
+        lng: lng ?? null,
+      });
       const nivel = await evaluarNivelThreat(uid, clientIp);
       if (nivel >= 2) await delay(3000);
       return res.status(400).json({ error: 'Coordenadas inválidas' });
     }
 
     if (!inBounds(lat, lng)) {
-      await registrarSospechoso({ evento: 'GEO_INVALIDO', detalle: `Fuera de Magdalena: lat=${lat} lng=${lng}`, ip: clientIp, uid, email: userEmail, userAgent });
+      await registrarSospechoso({
+        evento: 'GEO_INVALIDO',
+        detalle: `Fuera de Magdalena: lat=${lat} lng=${lng}`,
+        ip: clientIp, uid, email: userEmail, userAgent, userName,
+        mensaje: typeof description === 'string' ? description : '',
+        cats: Array.isArray(cats) ? cats : [],
+        lat, lng,
+      });
       const nivel = await evaluarNivelThreat(uid, clientIp);
       if (nivel >= 2) await delay(3000);
       return res.status(400).json({ error: 'Ubicación fuera del área de Magdalena' });
@@ -230,10 +287,16 @@ export default async function handler(req, res) {
 
     if (containsAttackPattern(description)) {
       const patron = ATTACK_PATTERNS.find(p => description.toLowerCase().includes(p));
-      await registrarSospechoso({ evento: 'ATAQUE_PATRON', detalle: `Patrón: "${patron}" en: "${description.substring(0,100)}"`, ip: clientIp, uid, email: userEmail, userAgent });
+      await registrarSospechoso({
+        evento: 'ATAQUE_PATRON',
+        detalle: `Patrón detectado: "${patron}"`,
+        ip: clientIp, uid, email: userEmail, userAgent, userName,
+        mensaje: description,           // guardamos el mensaje completo sin sanitizar
+        cats: Array.isArray(cats) ? cats : [],
+        lat, lng,
+      });
       const nivel = await evaluarNivelThreat(uid, clientIp);
       if (nivel >= 2) await delay(3000);
-      // Respuesta silenciosa para no revelar que fue detectado
       return res.status(200).json({ ok: true, id: 'blocked' });
     }
 
@@ -246,7 +309,14 @@ export default async function handler(req, res) {
       .map(c => ({ id: sanitize(c.id), name: sanitize(c.name), icon: sanitize(c.icon) }));
 
     if (safeCats.length === 0) {
-      await registrarSospechoso({ evento: 'ATAQUE_PATRON', detalle: `Categorías inválidas: ${JSON.stringify(cats).substring(0,100)}`, ip: clientIp, uid, email: userEmail, userAgent });
+      await registrarSospechoso({
+        evento: 'ATAQUE_PATRON',
+        detalle: `Categorías inválidas: ${JSON.stringify(cats).substring(0, 100)}`,
+        ip: clientIp, uid, email: userEmail, userAgent, userName,
+        mensaje: description,
+        cats,
+        lat, lng,
+      });
       const nivel = await evaluarNivelThreat(uid, clientIp);
       if (nivel >= 2) await delay(3000);
       return res.status(400).json({ error: 'Categorías inválidas' });
