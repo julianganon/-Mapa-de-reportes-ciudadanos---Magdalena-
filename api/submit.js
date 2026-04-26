@@ -18,10 +18,8 @@ const auth = getAuth();
 const RATE_LIMIT_MS = 60000;
 
 const GEO_BOUNDS = {
-  latMin: -36.0,
-  latMax: -34.5,
-  lngMin: -58.5,
-  lngMax: -56.5,
+  latMin: -36.0, latMax: -34.5,
+  lngMin: -58.5, lngMax: -56.5,
 };
 
 const VALID_CAT_IDS = [
@@ -36,6 +34,12 @@ const ATTACK_PATTERNS = [
   'alert(','confirm(','prompt('
 ];
 
+// ── Parámetros del sistema de bloqueo automático ─────────────────
+const VENTANA_MS = 10 * 60 * 1000; // 10 minutos
+const NIVEL_1 = 3;  // alerta silenciosa
+const NIVEL_2 = 5;  // demora de 3 segundos (invisible para el atacante)
+const NIVEL_3 = 8;  // bloqueo automático del UID
+
 function containsAttackPattern(str) {
   if (!str) return false;
   const lower = String(str).toLowerCase();
@@ -45,26 +49,22 @@ function containsAttackPattern(str) {
 function sanitize(str) {
   if (!str) return '';
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/\\/g, '&#092;')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;').replace(/\\/g, '&#092;')
     .trim();
 }
 
 function inBounds(lat, lng) {
-  return (
-    lat >= GEO_BOUNDS.latMin && lat <= GEO_BOUNDS.latMax &&
-    lng >= GEO_BOUNDS.lngMin && lng <= GEO_BOUNDS.lngMax
-  );
+  return lat >= GEO_BOUNDS.latMin && lat <= GEO_BOUNDS.latMax &&
+         lng >= GEO_BOUNDS.lngMin && lng <= GEO_BOUNDS.lngMax;
 }
 
-// ── Registrar evento sospechoso en Firestore ─────────────────────
-// Guarda evidencia completa para denuncia: IP, fecha, UID, email,
-// herramienta usada y detalle del intento.
-async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent, endpoint }) {
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── Registrar evento sospechoso ──────────────────────────────────
+async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent, endpoint, nivel }) {
   try {
     const ahora = new Date();
     const fechaAR = ahora.toLocaleString('es-AR', {
@@ -82,6 +82,7 @@ async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent,
       endpoint: endpoint || '/api/submit',
       fecha: ahora.toISOString(),
       fechaAR,
+      nivel: nivel || 0,
       bloqueado: true,
       revisado: false,
       timestamp: FieldValue.serverTimestamp(),
@@ -89,6 +90,61 @@ async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent,
   } catch (e) {
     console.error('[SUSPICIOUS] Error al registrar:', e);
   }
+}
+
+// ── Sistema de bloqueo progresivo ────────────────────────────────
+// Cuenta eventos sospechosos del UID en los últimos 10 minutos.
+// Nivel 1 (3): registra silenciosamente
+// Nivel 2 (5): agrega demora de 3 segundos
+// Nivel 3 (8): bloquea el UID automáticamente en Firestore
+async function evaluarNivelThreat(uid, ip) {
+  try {
+    const ventanaInicio = new Date(Date.now() - VENTANA_MS);
+    const snapshot = await db.collection('suspicious')
+      .where('uid', '==', uid)
+      .where('timestamp', '>=', ventanaInicio)
+      .get();
+
+    const count = snapshot.size;
+
+    if (count >= NIVEL_3) {
+      // Bloqueo automático — guardar en colección blocked_uids
+      // Desde ahí podés desbloquearlo manualmente si es un vecino
+      await db.collection('blocked_uids').doc(uid).set({
+        uid,
+        ip,
+        bloqueadoEn: FieldValue.serverTimestamp(),
+        motivo: `Nivel 3 alcanzado: ${count} eventos en 10 minutos`,
+        desbloqueado: false,
+      }, { merge: true });
+      console.log(`[BLOQUEO_AUTO] UID: ${uid} | Eventos: ${count}`);
+      return 3;
+    }
+
+    if (count >= NIVEL_2) return 2;
+    if (count >= NIVEL_1) return 1;
+    return 0;
+
+  } catch (e) {
+    console.error('[THREAT] Error evaluando nivel:', e);
+    return 0;
+  }
+}
+
+// ── Verificar si UID está bloqueado en Firestore ─────────────────
+// Primero chequea la variable de entorno, luego la colección.
+// Podés desbloquear desde Firebase sin tocar el código.
+async function isBlocked(uid) {
+  const envBlocked = (process.env.BLOCKED_UIDS || '').split(',').filter(Boolean);
+  if (envBlocked.includes(uid)) return true;
+
+  try {
+    const doc = await db.collection('blocked_uids').doc(uid).get();
+    if (doc.exists && doc.data().desbloqueado === false) return true;
+  } catch (e) {
+    console.error('[BLOCKED] Error verificando:', e);
+  }
+  return false;
 }
 
 export default async function handler(req, res) {
@@ -106,12 +162,7 @@ export default async function handler(req, res) {
     // ── 1. Verificar token Firebase ──────────────────────────────
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      await registrarSospechoso({
-        evento: 'TOKEN_INVALIDO',
-        detalle: 'Request sin header Authorization',
-        ip: clientIp,
-        userAgent,
-      });
+      await registrarSospechoso({ evento: 'TOKEN_INVALIDO', detalle: 'Request sin Authorization', ip: clientIp, userAgent });
       return res.status(401).json({ error: 'No autorizado' });
     }
 
@@ -120,12 +171,7 @@ export default async function handler(req, res) {
     try {
       decodedToken = await auth.verifyIdToken(idToken);
     } catch {
-      await registrarSospechoso({
-        evento: 'TOKEN_INVALIDO',
-        detalle: 'Token Firebase inválido o expirado',
-        ip: clientIp,
-        userAgent,
-      });
+      await registrarSospechoso({ evento: 'TOKEN_INVALIDO', detalle: 'Token inválido o expirado', ip: clientIp, userAgent });
       return res.status(401).json({ error: 'Token inválido' });
     }
 
@@ -135,36 +181,28 @@ export default async function handler(req, res) {
 
     console.log(`[SUBMIT] IP: ${clientIp} | UID: ${uid}`);
 
-    // ── 2. Bloqueo silencioso por UID ────────────────────────────
-    const BLOCKED_UIDS = (process.env.BLOCKED_UIDS || '').split(',').filter(Boolean);
-    if (BLOCKED_UIDS.includes(uid)) {
+    // ── 2. Verificar bloqueo (env + Firestore) ───────────────────
+    const bloqueado = await isBlocked(uid);
+    if (bloqueado) {
       console.log(`[BLOQUEADO] UID: ${uid} | IP: ${clientIp}`);
-      await registrarSospechoso({
-        evento: 'UID_BLOQUEADO',
-        detalle: 'UID en lista negra intentó enviar reclamo',
-        ip: clientIp,
-        uid,
-        email: userEmail,
-        userAgent,
-      });
+      await registrarSospechoso({ evento: 'UID_BLOQUEADO', detalle: 'UID bloqueado intentó enviar', ip: clientIp, uid, email: userEmail, userAgent });
+      // Respuesta silenciosa — el atacante cree que funcionó
       return res.status(200).json({ ok: true, id: 'blocked' });
     }
 
-    // ── 3. Rate limit persistente en Firestore ───────────────────
+    // ── 3. Rate limit persistente ────────────────────────────────
     const rateLimitRef = db.collection('rate_limits').doc(uid);
     const rateLimitDoc = await rateLimitRef.get();
 
     if (rateLimitDoc.exists) {
       const lastSubmit = rateLimitDoc.data().lastSubmit?.toMillis() || 0;
       if (Date.now() - lastSubmit < RATE_LIMIT_MS) {
-        await registrarSospechoso({
-          evento: 'RATE_LIMIT',
-          detalle: 'Demasiados envíos en menos de 60 segundos',
-          ip: clientIp,
-          uid,
-          email: userEmail,
-          userAgent,
-        });
+        await registrarSospechoso({ evento: 'RATE_LIMIT', detalle: 'Envíos en ráfaga', ip: clientIp, uid, email: userEmail, userAgent });
+
+        // Evaluar nivel de amenaza después de registrar
+        const nivel = await evaluarNivelThreat(uid, clientIp);
+        if (nivel >= 2) await delay(3000); // demora invisible
+
         return res.status(429).json({ error: 'Esperá un momento antes de enviar otro reclamo' });
       }
     }
@@ -173,27 +211,16 @@ export default async function handler(req, res) {
     const { cats, description, lat, lng } = req.body;
 
     if (typeof lat !== 'number' || typeof lng !== 'number') {
-      await registrarSospechoso({
-        evento: 'GEO_INVALIDO',
-        detalle: `Coordenadas no numéricas: lat=${lat} lng=${lng}`,
-        ip: clientIp,
-        uid,
-        email: userEmail,
-        userAgent,
-      });
+      await registrarSospechoso({ evento: 'GEO_INVALIDO', detalle: `Coords no numéricas: lat=${lat} lng=${lng}`, ip: clientIp, uid, email: userEmail, userAgent });
+      const nivel = await evaluarNivelThreat(uid, clientIp);
+      if (nivel >= 2) await delay(3000);
       return res.status(400).json({ error: 'Coordenadas inválidas' });
     }
 
     if (!inBounds(lat, lng)) {
-      console.log(`[GEO_INVALIDO] UID: ${uid} | lat: ${lat} | lng: ${lng} | IP: ${clientIp}`);
-      await registrarSospechoso({
-        evento: 'GEO_INVALIDO',
-        detalle: `Coordenadas fuera de Magdalena: lat=${lat} lng=${lng}`,
-        ip: clientIp,
-        uid,
-        email: userEmail,
-        userAgent,
-      });
+      await registrarSospechoso({ evento: 'GEO_INVALIDO', detalle: `Fuera de Magdalena: lat=${lat} lng=${lng}`, ip: clientIp, uid, email: userEmail, userAgent });
+      const nivel = await evaluarNivelThreat(uid, clientIp);
+      if (nivel >= 2) await delay(3000);
       return res.status(400).json({ error: 'Ubicación fuera del área de Magdalena' });
     }
 
@@ -203,16 +230,11 @@ export default async function handler(req, res) {
 
     if (containsAttackPattern(description)) {
       const patron = ATTACK_PATTERNS.find(p => description.toLowerCase().includes(p));
-      console.log(`[ATAQUE] Patrón detectado - UID: ${uid} | IP: ${clientIp}`);
-      await registrarSospechoso({
-        evento: 'ATAQUE_PATRON',
-        detalle: `Patrón: "${patron}" en: "${description.substring(0, 100)}"`,
-        ip: clientIp,
-        uid,
-        email: userEmail,
-        userAgent,
-      });
-      return res.status(400).json({ error: 'Contenido no permitido en la descripción' });
+      await registrarSospechoso({ evento: 'ATAQUE_PATRON', detalle: `Patrón: "${patron}" en: "${description.substring(0,100)}"`, ip: clientIp, uid, email: userEmail, userAgent });
+      const nivel = await evaluarNivelThreat(uid, clientIp);
+      if (nivel >= 2) await delay(3000);
+      // Respuesta silenciosa para no revelar que fue detectado
+      return res.status(200).json({ ok: true, id: 'blocked' });
     }
 
     if (!Array.isArray(cats) || cats.length === 0) {
@@ -221,21 +243,12 @@ export default async function handler(req, res) {
 
     const safeCats = cats
       .filter(c => VALID_CAT_IDS.includes(c.id))
-      .map(c => ({
-        id: sanitize(c.id),
-        name: sanitize(c.name),
-        icon: sanitize(c.icon)
-      }));
+      .map(c => ({ id: sanitize(c.id), name: sanitize(c.name), icon: sanitize(c.icon) }));
 
     if (safeCats.length === 0) {
-      await registrarSospechoso({
-        evento: 'ATAQUE_PATRON',
-        detalle: `Categorías inválidas: ${JSON.stringify(cats).substring(0, 100)}`,
-        ip: clientIp,
-        uid,
-        email: userEmail,
-        userAgent,
-      });
+      await registrarSospechoso({ evento: 'ATAQUE_PATRON', detalle: `Categorías inválidas: ${JSON.stringify(cats).substring(0,100)}`, ip: clientIp, uid, email: userEmail, userAgent });
+      const nivel = await evaluarNivelThreat(uid, clientIp);
+      if (nivel >= 2) await delay(3000);
       return res.status(400).json({ error: 'Categorías inválidas' });
     }
 
@@ -245,29 +258,21 @@ export default async function handler(req, res) {
 
     // ── 5. Guardar reclamo ───────────────────────────────────────
     const report = {
-      cats: safeCats,
-      description: safeDesc,
-      lat,
-      lng,
-      timestamp: new Date().toISOString(),
-      status: 'Pendiente',
-      contactName: contactName || null,
-      contactInfo: contactInfo || null,
-      userUid: uid,
-      userName,
-      userEmail,
+      cats: safeCats, description: safeDesc, lat, lng,
+      timestamp: new Date().toISOString(), status: 'Pendiente',
+      contactName: contactName || null, contactInfo: contactInfo || null,
+      userUid: uid, userName, userEmail,
     };
 
     const docRef = await db.collection('reports').add(report);
     await rateLimitRef.set({ lastSubmit: FieldValue.serverTimestamp(), uid });
 
-    // ── 6. Webhook a Google Sheets (opcional) ───────────────────
+    // ── 6. Webhook a Google Sheets ───────────────────────────────
     const sheetsUrl = process.env.SHEETS_WEBHOOK_URL;
     if (sheetsUrl) {
       const mapsUrl = `https://www.google.com/maps?q=${lat},${lng}`;
       fetch(sheetsUrl, {
-        method: 'POST',
-        mode: 'no-cors',
+        method: 'POST', mode: 'no-cors',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...report, mapsUrl, secret: process.env.SHEETS_TOKEN })
       }).catch(() => {});
