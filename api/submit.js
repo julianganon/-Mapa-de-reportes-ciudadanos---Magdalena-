@@ -15,12 +15,8 @@ if (!getApps().length) {
 const db = getFirestore();
 const auth = getAuth();
 
-// Rate limit: 1 reclamo por UID cada 60 segundos
-// Guardado en Firestore — persiste entre instancias serverless
 const RATE_LIMIT_MS = 60000;
 
-// Bounding box del partido de Magdalena + margen generoso
-// Cualquier coordenada fuera de esto es inválida o maliciosa
 const GEO_BOUNDS = {
   latMin: -36.0,
   latMax: -34.5,
@@ -33,8 +29,6 @@ const VALID_CAT_IDS = [
   'agua','aguas','faltlum','tacho','rampa','zanja','otro'
 ];
 
-// Patrones de ataque — validados en el SERVIDOR, no solo en el frontend.
-// Un bot que llama directo a la API bypasea el frontend completamente.
 const ATTACK_PATTERNS = [
   'ontoggle','onerror','onload','onclick','onmouse','onkey',
   'javascript:','<script','<iframe','<details','<svg','<img',
@@ -67,6 +61,36 @@ function inBounds(lat, lng) {
   );
 }
 
+// ── Registrar evento sospechoso en Firestore ─────────────────────
+// Guarda evidencia completa para denuncia: IP, fecha, UID, email,
+// herramienta usada y detalle del intento.
+async function registrarSospechoso({ evento, detalle, ip, uid, email, userAgent, endpoint }) {
+  try {
+    const ahora = new Date();
+    const fechaAR = ahora.toLocaleString('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    await db.collection('suspicious').add({
+      evento,
+      detalle: detalle || '',
+      ip: ip || 'DESCONOCIDA',
+      uid: uid || 'NO_AUTENTICADO',
+      email: email || '',
+      userAgent: userAgent || '',
+      endpoint: endpoint || '/api/submit',
+      fecha: ahora.toISOString(),
+      fechaAR,
+      bloqueado: true,
+      revisado: false,
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.error('[SUSPICIOUS] Error al registrar:', e);
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://magdalena-reporta.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -75,10 +99,19 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'IP_DESCONOCIDA';
+  const userAgent = req.headers['user-agent'] || '';
+
   try {
     // ── 1. Verificar token Firebase ──────────────────────────────
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      await registrarSospechoso({
+        evento: 'TOKEN_INVALIDO',
+        detalle: 'Request sin header Authorization',
+        ip: clientIp,
+        userAgent,
+      });
       return res.status(401).json({ error: 'No autorizado' });
     }
 
@@ -87,6 +120,12 @@ export default async function handler(req, res) {
     try {
       decodedToken = await auth.verifyIdToken(idToken);
     } catch {
+      await registrarSospechoso({
+        evento: 'TOKEN_INVALIDO',
+        detalle: 'Token Firebase inválido o expirado',
+        ip: clientIp,
+        userAgent,
+      });
       return res.status(401).json({ error: 'Token inválido' });
     }
 
@@ -94,24 +133,38 @@ export default async function handler(req, res) {
     const userEmail = decodedToken.email || '';
     const userName = decodedToken.name || '';
 
-    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'IP_DESCONOCIDA';
     console.log(`[SUBMIT] IP: ${clientIp} | UID: ${uid}`);
 
     // ── 2. Bloqueo silencioso por UID ────────────────────────────
     const BLOCKED_UIDS = (process.env.BLOCKED_UIDS || '').split(',').filter(Boolean);
     if (BLOCKED_UIDS.includes(uid)) {
       console.log(`[BLOQUEADO] UID: ${uid} | IP: ${clientIp}`);
+      await registrarSospechoso({
+        evento: 'UID_BLOQUEADO',
+        detalle: 'UID en lista negra intentó enviar reclamo',
+        ip: clientIp,
+        uid,
+        email: userEmail,
+        userAgent,
+      });
       return res.status(200).json({ ok: true, id: 'blocked' });
     }
 
     // ── 3. Rate limit persistente en Firestore ───────────────────
-    // A diferencia del Map() en memoria, esto sobrevive cold starts
     const rateLimitRef = db.collection('rate_limits').doc(uid);
     const rateLimitDoc = await rateLimitRef.get();
 
     if (rateLimitDoc.exists) {
       const lastSubmit = rateLimitDoc.data().lastSubmit?.toMillis() || 0;
       if (Date.now() - lastSubmit < RATE_LIMIT_MS) {
+        await registrarSospechoso({
+          evento: 'RATE_LIMIT',
+          detalle: 'Demasiados envíos en menos de 60 segundos',
+          ip: clientIp,
+          uid,
+          email: userEmail,
+          userAgent,
+        });
         return res.status(429).json({ error: 'Esperá un momento antes de enviar otro reclamo' });
       }
     }
@@ -120,12 +173,27 @@ export default async function handler(req, res) {
     const { cats, description, lat, lng } = req.body;
 
     if (typeof lat !== 'number' || typeof lng !== 'number') {
+      await registrarSospechoso({
+        evento: 'GEO_INVALIDO',
+        detalle: `Coordenadas no numéricas: lat=${lat} lng=${lng}`,
+        ip: clientIp,
+        uid,
+        email: userEmail,
+        userAgent,
+      });
       return res.status(400).json({ error: 'Coordenadas inválidas' });
     }
 
-    // Validar que las coordenadas estén dentro del partido de Magdalena
     if (!inBounds(lat, lng)) {
       console.log(`[GEO_INVALIDO] UID: ${uid} | lat: ${lat} | lng: ${lng} | IP: ${clientIp}`);
+      await registrarSospechoso({
+        evento: 'GEO_INVALIDO',
+        detalle: `Coordenadas fuera de Magdalena: lat=${lat} lng=${lng}`,
+        ip: clientIp,
+        uid,
+        email: userEmail,
+        userAgent,
+      });
       return res.status(400).json({ error: 'Ubicación fuera del área de Magdalena' });
     }
 
@@ -133,11 +201,20 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Descripción inválida' });
     }
 
-    // Validar patrones de ataque en el servidor — no confiar en el frontend
     if (containsAttackPattern(description)) {
+      const patron = ATTACK_PATTERNS.find(p => description.toLowerCase().includes(p));
       console.log(`[ATAQUE] Patrón detectado - UID: ${uid} | IP: ${clientIp}`);
+      await registrarSospechoso({
+        evento: 'ATAQUE_PATRON',
+        detalle: `Patrón: "${patron}" en: "${description.substring(0, 100)}"`,
+        ip: clientIp,
+        uid,
+        email: userEmail,
+        userAgent,
+      });
       return res.status(400).json({ error: 'Contenido no permitido en la descripción' });
     }
+
     if (!Array.isArray(cats) || cats.length === 0) {
       return res.status(400).json({ error: 'Seleccioná al menos una categoría' });
     }
@@ -151,6 +228,14 @@ export default async function handler(req, res) {
       }));
 
     if (safeCats.length === 0) {
+      await registrarSospechoso({
+        evento: 'ATAQUE_PATRON',
+        detalle: `Categorías inválidas: ${JSON.stringify(cats).substring(0, 100)}`,
+        ip: clientIp,
+        uid,
+        email: userEmail,
+        userAgent,
+      });
       return res.status(400).json({ error: 'Categorías inválidas' });
     }
 
@@ -174,8 +259,6 @@ export default async function handler(req, res) {
     };
 
     const docRef = await db.collection('reports').add(report);
-
-    // Actualizar rate limit en Firestore DESPUÉS de guardar exitosamente
     await rateLimitRef.set({ lastSubmit: FieldValue.serverTimestamp(), uid });
 
     // ── 6. Webhook a Google Sheets (opcional) ───────────────────
