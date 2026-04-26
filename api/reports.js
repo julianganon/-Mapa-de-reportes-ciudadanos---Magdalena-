@@ -20,9 +20,33 @@ const ALLOWED_ORIGINS = [
   'https://magdalena-reporta-estadisticas.vercel.app'
 ];
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
-
-// Campos que NUNCA salen en la respuesta pública
 const PRIVATE_FIELDS = ['userEmail', 'userUid', 'contactName', 'contactInfo'];
+
+// ── Caché en memoria del servidor ────────────────────────────────
+// Firestore solo se consulta UNA VEZ cada 60 segundos,
+// sin importar cuántas personas tengan la página abierta.
+const CACHE_TTL_MS = 60000;
+let _cache = null;
+let _cacheTime = 0;
+
+// ── Rate limit por IP en GET ─────────────────────────────────────
+// Máximo 30 requests por IP por minuto.
+const READ_LIMIT_MAP = new Map();
+const READ_LIMIT_MAX = 30;
+const READ_LIMIT_MS = 60000;
+
+function isReadRateLimited(ip) {
+  const now = Date.now();
+  const entry = READ_LIMIT_MAP.get(ip) || { count: 0, start: now };
+  if (now - entry.start > READ_LIMIT_MS) {
+    READ_LIMIT_MAP.set(ip, { count: 1, start: now });
+    return false;
+  }
+  if (entry.count >= READ_LIMIT_MAX) return true;
+  entry.count++;
+  READ_LIMIT_MAP.set(ip, entry);
+  return false;
+}
 
 export default async function handler(req, res) {
   const origin = req.headers.origin;
@@ -36,10 +60,13 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Sin caché CDN — datos siempre frescos
   res.setHeader('Cache-Control', 'no-store, no-cache');
 
-  // Verificar si es admin para decidir qué campos devolver
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'unknown';
+  if (isReadRateLimited(clientIp)) {
+    return res.status(429).json({ error: 'Demasiadas solicitudes. Esperá un momento.' });
+  }
+
   let isAdmin = false;
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
@@ -47,37 +74,52 @@ export default async function handler(req, res) {
       const decoded = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
       isAdmin = decoded.email === ADMIN_EMAIL;
     } catch {
-      // Token inválido — se trata como visitante público, sin error
+      // Token inválido — visitante público
     }
   }
 
   try {
+    const now = Date.now();
+    const cacheValid = _cache && (now - _cacheTime < CACHE_TTL_MS);
+
+    if (cacheValid && !isAdmin) {
+      const etag = _cache.etag;
+      if (req.headers['if-none-match'] === etag) {
+        return res.status(304).end();
+      }
+      return res.status(200).json({ reports: _cache.publicReports });
+    }
+
     const snapshot = await db.collection('reports')
       .orderBy('timestamp', 'desc')
       .get();
 
-    const reports = [];
+    const fullReports = [];
+    const publicReports = [];
+
     snapshot.forEach(doc => {
       const data = doc.data();
-
-      if (!isAdmin) {
-        // Visitante público: eliminar todos los campos privados
-        PRIVATE_FIELDS.forEach(f => delete data[f]);
-      }
-
-      reports.push({ id: doc.id, ...data });
+      fullReports.push({ id: doc.id, ...data });
+      const publicData = { ...data };
+      PRIVATE_FIELDS.forEach(f => delete publicData[f]);
+      publicReports.push({ id: doc.id, ...publicData });
     });
 
-    // ETag: huella digital del estado actual
-    const latestTs = reports.length > 0 ? reports[0].timestamp : '0';
-    const etag = `"${reports.length}-${latestTs}"`;
+    const latestTs = fullReports.length > 0 ? fullReports[0].timestamp : '0';
+    const etag = `"${fullReports.length}-${latestTs}"`;
+
+    _cache = { publicReports, etag };
+    _cacheTime = now;
+
     res.setHeader('ETag', etag);
 
-    if (req.headers['if-none-match'] === etag) {
+    if (!isAdmin && req.headers['if-none-match'] === etag) {
       return res.status(304).end();
     }
 
-    return res.status(200).json({ reports });
+    const responseReports = isAdmin ? fullReports : publicReports;
+    return res.status(200).json({ reports: responseReports });
+
   } catch (err) {
     console.error('Error reading reports:', err);
     return res.status(500).json({ error: 'Error al leer reclamos' });
