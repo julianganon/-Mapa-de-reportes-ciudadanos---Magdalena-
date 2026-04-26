@@ -15,14 +15,20 @@ if (!getApps().length) {
 const db = getFirestore();
 const auth = getAuth();
 
-const ORIGIN = 'https://magdalena-reporta.vercel.app';
+const ALLOWED_ORIGINS = [
+  'https://magdalena-reporta.vercel.app',
+  'https://magdalena-reporta-estadisticas.vercel.app'
+];
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 
 // Campos que NUNCA salen en la respuesta pública
 const PRIVATE_FIELDS = ['userEmail', 'userUid', 'contactName', 'contactInfo'];
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', ORIGIN);
+  const origin = req.headers.origin;
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, Authorization');
   res.setHeader('Access-Control-Expose-Headers', 'ETag');
