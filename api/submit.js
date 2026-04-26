@@ -65,6 +65,13 @@ export default async function handler(req, res) {
     const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'IP_DESCONOCIDA';
     console.log(`[SEGURIDAD] Reporte entrante - IP: ${clientIp} | Email: ${userEmail} | UID: ${uid}`);
 
+    // Bloqueo silencioso por UID — el atacante cree que funcionó
+    const BLOCKED_UIDS = (process.env.BLOCKED_UIDS || '').split(',').filter(Boolean);
+    if (BLOCKED_UIDS.includes(uid)) {
+      console.log(`[BLOQUEADO] UID: ${uid} | IP: ${clientIp}`);
+      return res.status(200).json({ ok: true, id: 'blocked' });
+    }
+
     // Rate limiting
     const now = Date.now();
     const lastSubmit = rateLimitMap.get(uid) || 0;
