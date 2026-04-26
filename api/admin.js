@@ -18,11 +18,27 @@ const auth = getAuth();
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Origin', 'https://magdalena-reporta.vercel.app');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // GET — solo verifica si el token es de admin (sin exponer el email)
+  if (req.method === 'GET') {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'No autorizado' });
+      const idToken = authHeader.split('Bearer ')[1];
+      let decodedToken;
+      try { decodedToken = await auth.verifyIdToken(idToken); } catch { return res.status(401).json({ error: 'Token inválido' }); }
+      if (decodedToken.email !== ADMIN_EMAIL) return res.status(403).json({ isAdmin: false });
+      return res.status(200).json({ isAdmin: true });
+    } catch (err) {
+      return res.status(500).json({ error: 'Error' });
+    }
+  }
+
   if (req.method !== 'PUT' && req.method !== 'DELETE') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
