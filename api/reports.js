@@ -23,8 +23,8 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const PRIVATE_FIELDS = ['userEmail', 'userUid', 'contactName', 'contactInfo'];
 
 // ── Caché en memoria del servidor ────────────────────────────────
-// Firestore solo se consulta UNA VEZ cada 60 segundos,
-// sin importar cuántas personas tengan la página abierta.
+// Segunda línea de defensa: si la misma instancia recibe requests
+// seguidos, no consulta Firestore más de una vez por minuto.
 const CACHE_TTL_MS = 60000;
 let _cache = null;
 let _cacheTime = 0;
@@ -60,13 +60,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  res.setHeader('Cache-Control', 'no-store, no-cache');
-
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 'unknown';
   if (isReadRateLimited(clientIp)) {
     return res.status(429).json({ error: 'Demasiadas solicitudes. Esperá un momento.' });
   }
 
+  // ── Detectar admin antes de decidir el caché ─────────────────
   let isAdmin = false;
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
@@ -78,6 +77,16 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── Cache-Control condicional ─────────────────────────────────
+  // Admin: siempre datos frescos.
+  // Público: CDN de Vercel cachea 60 segundos → una sola consulta
+  // a Firestore por minuto sin importar cuántos usuarios entren.
+  if (isAdmin) {
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+  } else {
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=30');
+  }
+
   try {
     const now = Date.now();
     const cacheValid = _cache && (now - _cacheTime < CACHE_TTL_MS);
@@ -87,6 +96,7 @@ export default async function handler(req, res) {
       if (req.headers['if-none-match'] === etag) {
         return res.status(304).end();
       }
+      res.setHeader('ETag', etag);
       return res.status(200).json({ reports: _cache.publicReports });
     }
 
