@@ -34,6 +34,34 @@ const ATTACK_PATTERNS = [
   'alert(','confirm(','prompt('
 ];
 
+// ── Detección de spam ────────────────────────────────────────────
+const SPAM_PATTERNS = [
+  /https?:\/\//i,                    // cualquier URL
+  /(.)\1{8,}/,                       // carácter repetido 8+ veces
+  /\b(casino|viagra|crypto|bitcoin|porn|xxx|onlyfans|buy now|click here|free money)\b/i,
+  /\b(ganar|gana|dinero fácil|inversión segura|llama ya|oferta)\b/i,
+  /\bspam\b/i,                       // la palabra "spam" literal
+  /\bprueba\b/i,                     // test bombing
+  /(\p{Emoji})\1{2,}/u,             // emoji repetido 3+ veces
+];
+
+// Más del 70% de letras en mayúsculas → grito / spam
+function isShouting(str) {
+  if (!str || str.length < 8) return false;
+  const letters = str.replace(/[^a-záéíóúñA-ZÁÉÍÓÚÑ]/g, '');
+  if (letters.length === 0) return false;
+  const upper = letters.replace(/[^A-ZÁÉÍÓÚÑ]/g, '');
+  return (upper.length / letters.length) > 0.7;
+}
+
+function containsSpam(str) {
+  if (!str) return false;
+  if (isShouting(str)) return true;
+  return SPAM_PATTERNS.some(p => p.test(String(str)));
+}
+
+// ────────────────────────────────────────────────────────────────
+
 const VENTANA_MS = 10 * 60 * 1000;
 const NIVEL_1 = 3;
 const NIVEL_2 = 5;
@@ -63,12 +91,10 @@ function delay(ms) {
 }
 
 // ── Registrar evento sospechoso ──────────────────────────────────
-// Incluye todos los campos necesarios para una denuncia formal.
 async function registrarSospechoso({
   evento, detalle,
   ip, uid, email, userAgent, userName,
   endpoint, nivel,
-  // campos de evidencia del reporte:
   mensaje, cats, lat, lng,
   reportId,
 }) {
@@ -81,36 +107,23 @@ async function registrarSospechoso({
     });
 
     await db.collection('suspicious').add({
-      // ── Identificación del actor ───────────────────────────────
       uid: uid || 'NO_AUTENTICADO',
       email: email || '',
       userName: userName || '',
-
-      // ── Origen de la solicitud ─────────────────────────────────
       ip: ip || 'DESCONOCIDA',
       userAgent: userAgent || '',
       endpoint: endpoint || '/api/submit',
-
-      // ── Tipo de evento ─────────────────────────────────────────
       evento,
       detalle: detalle || '',
       nivel: nivel || 0,
-
-      // ── Contenido enviado (evidencia del mensaje) ──────────────
-      mensaje: mensaje || '',           // texto completo del campo descripción
-      cats: cats || [],                 // categorías seleccionadas
-      lat: lat ?? null,                 // coordenadas enviadas
+      mensaje: mensaje || '',
+      cats: cats || [],
+      lat: lat ?? null,
       lng: lng ?? null,
-
-      // ── Referencia cruzada con /reports ───────────────────────
-      reportId: reportId || null,       // ID del doc si llegó a guardarse
-
-      // ── Timestamps ────────────────────────────────────────────
+      reportId: reportId || null,
       fecha: ahora.toISOString(),
       fechaAR,
       timestamp: FieldValue.serverTimestamp(),
-
-      // ── Flags de revisión ─────────────────────────────────────
       bloqueado: true,
       revisado: false,
     });
@@ -206,7 +219,6 @@ export default async function handler(req, res) {
     const userEmail = decodedToken.email || '';
     const userName = decodedToken.name || '';
 
-    // Extraer campos del body para tenerlos disponibles en todos los registros
     const { cats, description, lat, lng } = req.body;
 
     console.log(`[SUBMIT] IP: ${clientIp} | UID: ${uid}`);
@@ -291,12 +303,32 @@ export default async function handler(req, res) {
         evento: 'ATAQUE_PATRON',
         detalle: `Patrón detectado: "${patron}"`,
         ip: clientIp, uid, email: userEmail, userAgent, userName,
-        mensaje: description,           // guardamos el mensaje completo sin sanitizar
+        mensaje: description,
         cats: Array.isArray(cats) ? cats : [],
         lat, lng,
       });
       const nivel = await evaluarNivelThreat(uid, clientIp);
       if (nivel >= 2) await delay(3000);
+      return res.status(200).json({ ok: true, id: 'blocked' });
+    }
+
+    // ── NUEVO: Detección de spam ─────────────────────────────────
+    if (containsSpam(description)) {
+      const patronDetectado = isShouting(description)
+        ? 'mayoría mayúsculas'
+        : (SPAM_PATTERNS.find(p => p.test(description))?.toString() || 'patrón desconocido');
+
+      await registrarSospechoso({
+        evento: 'SPAM_DETECTADO',
+        detalle: `Patrón de spam: ${patronDetectado}`,
+        ip: clientIp, uid, email: userEmail, userAgent, userName,
+        mensaje: description,           // evidencia sin sanitizar
+        cats: Array.isArray(cats) ? cats : [],
+        lat, lng,
+      });
+      const nivel = await evaluarNivelThreat(uid, clientIp);
+      if (nivel >= 2) await delay(3000);
+      // Respuesta falsa: el hacker cree que funcionó
       return res.status(200).json({ ok: true, id: 'blocked' });
     }
 
